@@ -1,0 +1,390 @@
+.dashboard {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.dashboard-header h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  letter-spacing: -0.2px;
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  white-space: nowrap;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-good);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-good) 25%, transparent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.live-dot-error {
+  background: var(--status-critical);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-critical) 25%, transparent);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.banner {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.banner-error {
+  background: color-mix(in oklab, var(--status-critical) 12%, var(--surface-1));
+  border: 1px solid color-mix(in oklab, var(--status-critical) 40%, transparent);
+  color: var(--text-primary);
+}
+
+/* --- Stat tiles ---------------------------------------------------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.stat-tile {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  border-top: 3px solid var(--gridline);
+}
+
+.stat-tile-warning {
+  border-top-color: var(--status-warning);
+}
+.stat-tile-critical {
+  border-top-color: var(--status-critical);
+}
+.stat-tile-good {
+  border-top-color: var(--status-good);
+}
+
+.stat-tile-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.stat-tile-value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stat-tile-sublabel {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* --- Panels ---------------------------------------------------------- */
+
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.panel-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 860px) {
+  .panel-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel-half {
+  margin-bottom: 0;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* --- Tables ------------------------------------------------------------ */
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.data-table.compact th,
+.data-table.compact td {
+  padding: 6px 10px;
+}
+
+.data-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--gridline);
+  padding: 8px 12px;
+}
+
+.data-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gridline);
+  color: var(--text-primary);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table .num {
+  text-align: right;
+}
+
+.reason-cell {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Probability pill ---------------------------------------------- */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+}
+
+.pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.pill-label {
+  font-weight: 500;
+  opacity: 0.85;
+  text-transform: lowercase;
+}
+
+.pill-good {
+  background: color-mix(in oklab, var(--status-good) 14%, transparent);
+  color: var(--status-good);
+}
+.pill-good .pill-dot {
+  background: var(--status-good);
+}
+
+.pill-warning {
+  background: color-mix(in oklab, var(--status-warning) 20%, transparent);
+  color: color-mix(in oklab, var(--status-warning) 70%, var(--text-primary));
+}
+.pill-warning .pill-dot {
+  background: var(--status-warning);
+}
+
+.pill-critical {
+  background: color-mix(in oklab, var(--status-critical) 16%, transparent);
+  color: var(--status-critical);
+}
+.pill-critical .pill-dot {
+  background: var(--status-critical);
+}
+
+/* --- Status chip (alert_status) ------------------------------------ */
+
+.status-chip {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.status-chip-open {
+  color: color-mix(in oklab, var(--status-warning) 70%, var(--text-primary));
+  border-color: color-mix(in oklab, var(--status-warning) 40%, transparent);
+}
+
+.status-chip-auto_blocked {
+  color: var(--status-critical);
+  border-color: color-mix(in oklab, var(--status-critical) 40%, transparent);
+}
+
+.status-chip-confirmed_fraud {
+  color: var(--status-critical);
+  border-color: color-mix(in oklab, var(--status-critical) 40%, transparent);
+}
+
+.status-chip-false_positive,
+.status-chip-under_review {
+  color: var(--text-secondary);
+}
+
+/* --- Suspended accounts list ----------------------------------------- */
+
+.suspended-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.suspended-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--gridline);
+}
+
+.suspended-item:last-child {
+  border-bottom: none;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.status-dot-critical {
+  background: var(--status-critical);
+}
+
+.suspended-item-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.suspended-item-body .muted {
+  font-size: 12px;
+}
+
+/* --- Bar chart (model comparison) ----------------------------------- */
+
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+}
+
+.bar-row-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  background: var(--surface-2);
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.bar-row-value {
+  font-size: 12px;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 640px) {
+  .bar-row {
+    grid-template-columns: 100px 1fr 48px;
+  }
+}

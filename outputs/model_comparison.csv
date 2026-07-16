@@ -1,0 +1,7 @@
+model,pr_auc,roc_auc,precision,recall,f1,true_positives,false_positives,false_negatives,true_negatives
+Rule-Based Engine,1.0,1.0,0.5,1.0,0.6666666666666666,3,3,0,394
+Logistic Regression,1.0,1.0,1.0,1.0,1.0,3,0,0,397
+Random Forest,1.0,1.0,1.0,1.0,1.0,3,0,0,397
+Isolation Forest (unsupervised),1.0,1.0,0.42857142857142855,1.0,0.6,3,4,0,393
+XGBoost,1.0,1.0,1.0,1.0,1.0,3,0,0,397
+Local Outlier Factor (unsupervised),0.24206349206349204,0.9848866498740555,0.14285714285714285,0.3333333333333333,0.2,1,6,2,391

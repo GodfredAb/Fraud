@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+dist/
+.env
+.env.local
+
+# Generated, environment-specific artifacts - reproducible via the pipeline.
+# data/synthetic.csv and outputs/model_comparison.csv are kept as checked-in
+# reference artifacts (the README points to both directly).
+data/from_db.csv
+models/*.json
+.claude/
