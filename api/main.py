@@ -125,6 +125,32 @@ def recent_transactions(limit: int = Query(25, ge=1, le=200)):
     """, (limit,))
 
 
+@app.get("/api/transactions/{txn_id}")
+def transaction_detail(txn_id: int):
+    """Full detail for one transaction, for the dashboard's row-click
+    drill-down - everything recent_transactions/alerts trims out (balances,
+    device IMEIs, sender/receiver names) plus flagged/blocked reason and
+    scored_at (the same instant flagged/blocked were set - see
+    ml/ensemble.py:score_ensemble, which computes them together)."""
+    rows = query("""
+        SELECT
+            t.txn_id, t.txn_step, t.txn_timestamp, t.txn_type, t.amount,
+            t.sender_user_id, su.full_name AS sender_name, su.msisdn AS sender_msisdn,
+            t.sender_imei, t.sender_balance_old, t.sender_balance_new,
+            t.receiver_user_id, ru.full_name AS receiver_name, ru.msisdn AS receiver_msisdn,
+            t.receiver_imei, t.receiver_balance_old, t.receiver_balance_new,
+            t.is_fraud, t.fraud_probability, t.flagged, t.blocked, t.block_reason,
+            t.model_version, t.scored_at, t.created_at
+        FROM transactions t
+        LEFT JOIN users su ON su.user_id = t.sender_user_id
+        LEFT JOIN users ru ON ru.user_id = t.receiver_user_id
+        WHERE t.txn_id = %s
+    """, (txn_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="transaction not found")
+    return rows[0]
+
+
 @app.get("/api/suspended")
 def suspended_accounts():
     """Accounts monitor.py has frozen via write_alerts_to_db.suspend_users,

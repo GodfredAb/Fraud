@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { api } from "./api";
 import { usePolling } from "./hooks/usePolling";
 import { StatTile } from "./components/StatTile";
 import { AlertsTable } from "./components/AlertsTable";
 import { RecentActivity } from "./components/RecentActivity";
 import { SuspendedAccounts } from "./components/SuspendedAccounts";
+import { TransactionDetail } from "./components/TransactionDetail";
 import { relativeTime } from "./format";
 import "./App.css";
 
@@ -14,6 +16,7 @@ function App() {
   const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS);
   const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS);
   const { data: suspended } = usePolling(api.suspended, POLL_MS);
+  const [selectedTxnId, setSelectedTxnId] = useState(null);
 
   const blockThreshold = stats?.block_threshold ?? 0.8;
   const alertThreshold = stats?.alert_threshold ?? 0.5;
@@ -78,7 +81,12 @@ function App() {
           <h2>Fraud alert queue</h2>
           <span className="muted">newest first · polls every {POLL_MS / 1000}s</span>
         </div>
-        <AlertsTable alerts={alerts} blockThreshold={blockThreshold} alertThreshold={alertThreshold} />
+        <AlertsTable
+          alerts={alerts}
+          blockThreshold={blockThreshold}
+          alertThreshold={alertThreshold}
+          onSelect={setSelectedTxnId}
+        />
       </section>
 
       <div className="panel-row">
@@ -87,7 +95,12 @@ function App() {
             <h2>Live scoring feed</h2>
             <span className="muted">most recently scored</span>
           </div>
-          <RecentActivity transactions={recent} blockThreshold={blockThreshold} alertThreshold={alertThreshold} />
+          <RecentActivity
+            transactions={recent}
+            blockThreshold={blockThreshold}
+            alertThreshold={alertThreshold}
+            onSelect={setSelectedTxnId}
+          />
         </section>
 
         <section className="panel panel-half">
@@ -98,6 +111,10 @@ function App() {
           <SuspendedAccounts accounts={suspended} />
         </section>
       </div>
+
+      {selectedTxnId != null && (
+        <TransactionDetail txnId={selectedTxnId} onClose={() => setSelectedTxnId(null)} />
+      )}
     </div>
   );
 }

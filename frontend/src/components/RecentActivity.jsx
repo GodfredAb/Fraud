@@ -1,7 +1,7 @@
 import { ProbabilityPill } from "./ProbabilityPill";
 import { relativeTime, money } from "../format";
 
-export function RecentActivity({ transactions, blockThreshold, alertThreshold }) {
+export function RecentActivity({ transactions, blockThreshold, alertThreshold, onSelect }) {
   if (!transactions) {
     return <p className="muted">Loading…</p>;
   }
@@ -23,7 +23,7 @@ export function RecentActivity({ transactions, blockThreshold, alertThreshold })
         </thead>
         <tbody>
           {transactions.map((t) => (
-            <tr key={t.txn_id}>
+            <tr key={t.txn_id} className="clickable-row" onClick={() => onSelect?.(t.txn_id)}>
               <td className="muted">{relativeTime(t.scored_at)}</td>
               <td className="mono">#{t.txn_id}</td>
               <td className="muted">

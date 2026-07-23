@@ -1,7 +1,7 @@
 import { ProbabilityPill } from "./ProbabilityPill";
 import { relativeTime, money } from "../format";
 
-export function AlertsTable({ alerts, blockThreshold, alertThreshold }) {
+export function AlertsTable({ alerts, blockThreshold, alertThreshold, onSelect }) {
   if (!alerts) {
     return <p className="muted">Loading alerts…</p>;
   }
@@ -26,7 +26,7 @@ export function AlertsTable({ alerts, blockThreshold, alertThreshold }) {
         </thead>
         <tbody>
           {alerts.map((a) => (
-            <tr key={a.alert_id}>
+            <tr key={a.alert_id} className="clickable-row" onClick={() => onSelect?.(a.txn_id)}>
               <td className="muted">{relativeTime(a.alert_created_at)}</td>
               <td className="mono">#{a.txn_id}</td>
               <td>

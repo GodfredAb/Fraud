@@ -13,5 +13,6 @@ export const api = {
   stats: () => get("/api/stats"),
   alerts: (limit = 25) => get(`/api/alerts?limit=${limit}`),
   recentTransactions: (limit = 25) => get(`/api/transactions/recent?limit=${limit}`),
+  transaction: (txnId) => get(`/api/transactions/${txnId}`),
   suspended: () => get("/api/suspended"),
 };
