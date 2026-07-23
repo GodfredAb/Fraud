@@ -1,0 +1,29 @@
+name: Simulate and score traffic
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  feed-and-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Insert a batch of transactions
+        env:
+          MOMO_FRAUD_DSN: ${{ secrets.MOMO_FRAUD_DSN }}
+        run: python feeder/feeder.py --cycles 1
+
+      - name: Score pending transactions
+        env:
+          MOMO_FRAUD_DSN: ${{ secrets.MOMO_FRAUD_DSN }}
+        run: python monitor/monitor.py --once
