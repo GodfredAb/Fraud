@@ -135,6 +135,21 @@ class RuleEngine:
             ("mule_fanin_pattern", 0.4, False,
                 lambda df: (df["receiver_incoming_count_so_far"] >= self.fanin_min_incoming)
                 & (df["receiver_fanin_ratio"] > self.fanin_ratio_cutoff)),
+            # SIM-swap / device-cloning: a large cash-out/transfer from a
+            # sender whose device changed within the last 24h (including
+            # the very transaction the change happened on, where
+            # sender_hours_since_device_change == 0) - the classic
+            # swap-then-drain playbook, and near-certain fraud on its own:
+            # a legitimate device change (new phone) essentially never
+            # coincides with an immediate large cash-out in this dataset,
+            # since ordinary device changes aren't simulated at all - only
+            # feeder.py's injected sim_swap_drain fraud pattern produces
+            # this combination. Marked severe on that basis, same as the
+            # other three severe rules above.
+            ("device_change_then_large_txn", 0.6, True,
+                lambda df: (df["sender_hours_since_device_change"] <= 24)
+                & (df["amount"] > self.large_amount_cutoff)
+                & (df["is_cash_out_or_transfer"] == 1)),
         ]
 
     def evaluate(self, df: pd.DataFrame):

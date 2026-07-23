@@ -31,7 +31,8 @@ BASE_QUERY = """
         receiver_user_id           AS "nameDest",
         receiver_balance_old        AS "oldbalanceDest",
         receiver_balance_new         AS "newbalanceDest",
-        is_fraud                      AS "isFraud"
+        is_fraud                      AS "isFraud",
+        sender_imei, receiver_imei
     FROM transactions
     {where_clause}
     ORDER BY txn_step, txn_id

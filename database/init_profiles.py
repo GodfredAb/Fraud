@@ -48,6 +48,22 @@ def compute_final_profiles(df: pd.DataFrame):
         n = len(amounts)
         mean = amounts.mean()
         m2 = float(((amounts - mean) ** 2).sum())  # Welford-compatible: variance = m2/(n-1)
+
+        # SIM-swap tracking: g is already in timestamp order (df was sorted
+        # by load_and_standardize, and groupby preserves within-group row
+        # order) - walk it once to find the final IMEI and the last time it
+        # changed, matching what online_features.py's causal loop would
+        # have landed on if run one transaction at a time.
+        g_sorted = g.sort_values("timestamp", kind="mergesort")
+        imeis = g_sorted["sender_imei"].tolist()
+        timestamps = g_sorted["timestamp"].tolist()
+        last_change_step = None
+        prev_imei = None
+        for imei, ts in zip(imeis, timestamps):
+            if prev_imei is not None and imei != prev_imei:
+                last_change_step = float(ts)
+            prev_imei = imei
+
         profiles.setdefault(uid, {}).update({
             "sender_txn_count": int(n),
             "sender_amount_mean": float(mean),
@@ -55,6 +71,8 @@ def compute_final_profiles(df: pd.DataFrame):
             "sender_amount_max": float(amounts.max()),
             "sender_last_txn_step": float(g["timestamp"].max()),
             "sender_distinct_receivers": int(g["receiver_id"].nunique()),
+            "sender_last_imei": imeis[-1] if imeis else None,
+            "sender_last_device_change_step": last_change_step,
         })
 
     receiver_groups = df.groupby("receiver_id")
@@ -69,6 +87,7 @@ def compute_final_profiles(df: pd.DataFrame):
         "sender_txn_count": 0, "sender_amount_mean": 0.0, "sender_amount_m2": 0.0,
         "sender_amount_max": None, "sender_last_txn_step": None, "sender_distinct_receivers": 0,
         "receiver_incoming_count": 0, "receiver_distinct_senders": 0,
+        "sender_last_imei": None, "sender_last_device_change_step": None,
     }
     for uid, p in profiles.items():
         for k, v in defaults.items():

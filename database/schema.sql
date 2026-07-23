@@ -151,6 +151,13 @@ CREATE TABLE user_profiles (
     receiver_incoming_count     BIGINT            NOT NULL DEFAULT 0,
     receiver_distinct_senders   BIGINT            NOT NULL DEFAULT 0,
 
+    -- SIM-swap / device-cloning detection: the IMEI seen on this sender's
+    -- last transaction, and the step/hour at which their device last
+    -- changed (NULL = never observed a change) - see
+    -- ml/online_features.py and ml/rules.py's device_change_then_large_txn.
+    sender_last_imei                  VARCHAR(20),
+    sender_last_device_change_step    DOUBLE PRECISION,
+
     updated_at                  TIMESTAMP         NOT NULL DEFAULT now()
 );
 
@@ -193,7 +200,7 @@ CREATE TABLE transactions (
     -- or a hard rule fires - see database/write_alerts_to_db.py:suspend_users,
     -- which also freezes the sender's account when this is set.
     blocked                BOOLEAN       NOT NULL DEFAULT FALSE,
-    block_reason           VARCHAR(300),
+    block_reason           TEXT,
     model_version         VARCHAR(50),
     scored_at             TIMESTAMP,
 

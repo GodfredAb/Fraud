@@ -83,6 +83,24 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
         pair = (sender, receiver)
         is_new_counterparty = int(pair not in seen_pairs)
 
+        # SIM-swap / device-cloning: does this row's IMEI differ from the
+        # last IMEI seen for this sender? Compared BEFORE state is updated
+        # below, same causal pattern as amount_zscore_vs_self. A change
+        # detected on THIS row is 0 hours ago by definition - looking up
+        # sender_last_device_change_step would instead give the PREVIOUS
+        # change (or the "never" sentinel on a first-ever change), which is
+        # backwards for exactly the transaction that most needs to read as
+        # "just changed".
+        last_imei = ps["sender_last_imei"]
+        device_changed = int(last_imei is not None and row.sender_imei != last_imei)
+        if device_changed:
+            hours_since_device_change = 0.0
+        else:
+            last_change_step = ps["sender_last_device_change_step"]
+            hours_since_device_change = (
+                _hours_between(row.timestamp, last_change_step) if last_change_step is not None else default_gap
+            )
+
         hist = recent_history.setdefault(sender, [])
         velocity_counts = {}
         for w in windows:
@@ -119,6 +137,8 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
             "receiver_incoming_count_so_far": pr["receiver_incoming_count"],
             "receiver_distinct_senders_so_far": pr["receiver_distinct_senders"],
             "receiver_fanin_ratio": pr["receiver_distinct_senders"] / (pr["receiver_incoming_count"] + 1),
+            "sender_device_changed_this_txn": device_changed,
+            "sender_hours_since_device_change": hours_since_device_change,
         })
 
         # --- Update state for the NEXT transaction (causal) -----------------
@@ -129,6 +149,11 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
         ps["sender_amount_max"] = max(cummax, row.amount)
         ps["sender_last_txn_step"] = row.timestamp
         hist.append(row.timestamp)
+
+        if row.sender_imei is not None:
+            if device_changed:
+                ps["sender_last_device_change_step"] = row.timestamp
+            ps["sender_last_imei"] = row.sender_imei
 
         pr["receiver_incoming_count"] += 1
 

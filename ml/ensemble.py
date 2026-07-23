@@ -29,6 +29,94 @@ import config
 from rules import RuleEngine  # noqa: F401 - needed to unpickle a saved RuleEngine
 
 
+# Human-readable phrasing for each named rule in rules.py's
+# _rule_definitions, given the feature row that fired it - so the alert
+# queue/detail view explains WHAT was unusual, in the same terms the rule
+# itself evaluated, not just which rule's name matched.
+_RULE_PHRASES = {
+    "legacy_amount_cutoff": lambda r: (
+        f"amount GHS {r.amount:,.2f} is above the large-transaction cutoff learned from this population"
+    ),
+    "balance_mismatch": lambda r: (
+        f"ledger mismatch of GHS {max(abs(r.sender_balance_error), abs(r.receiver_balance_error)):,.2f} "
+        "between the recorded balances and the transaction amount"
+    ),
+    "insufficient_funds_executed": lambda r: (
+        "transaction went through even though the amount exceeded the sender's balance beforehand"
+    ),
+    "account_drained": lambda r: (
+        f"sender's account was emptied to GHS 0 by this GHS {r.amount:,.2f} transaction"
+    ),
+    "extreme_amount_vs_self": lambda r: (
+        f"amount is {r.amount_zscore_vs_self:.1f} standard deviations above this sender's own average "
+        f"(GHS {r.amount:,.2f} vs their usual GHS {r.user_amount_cummean:,.2f})"
+    ),
+    "velocity_burst": lambda r: (
+        f"{int(r.user_txn_count_last_1)} transactions from this sender in the last hour - well above their normal pace"
+    ),
+    "new_counterparty_large_night_cashout": lambda r: (
+        "large cash-out to a brand-new counterparty, sent during night hours"
+    ),
+    "mule_fanin_pattern": lambda r: (
+        f"receiver shows a money-mule fan-in pattern ({int(r.receiver_distinct_senders_so_far)} distinct senders "
+        f"across {int(r.receiver_incoming_count_so_far)} incoming transactions)"
+    ),
+    "device_change_then_large_txn": lambda r: (
+        "sender's device changed "
+        + ("on this very transaction" if r.sender_hours_since_device_change < 1
+           else f"{r.sender_hours_since_device_change:.1f}h ago")
+        + f", immediately followed by a large GHS {r.amount:,.2f} {'cash-out' if r.is_cash_out_or_transfer else 'transfer'} "
+        "- matches a SIM-swap / device-takeover pattern"
+    ),
+}
+
+
+def _behavior_clauses(row, skip_amount_clause=False):
+    """Clauses describing THIS transaction against the sender/receiver's
+    own learned history (see profile_store.py/online_features.py) -
+    included even when no named rule fired, so a flag is never explained
+    purely as an opaque model percentage. skip_amount_clause avoids
+    restating the sender's-average comparison when a rule phrase (e.g.
+    extreme_amount_vs_self/legacy_amount_cutoff) already covered it."""
+    clauses = []
+    if skip_amount_clause:
+        pass
+    elif row.user_txn_count_so_far > 0:
+        clauses.append(
+            f"amount GHS {row.amount:,.2f} vs sender's usual GHS {row.user_amount_cummean:,.2f} "
+            f"({row.amount_zscore_vs_self:+.1f}sigma over {int(row.user_txn_count_so_far)} prior transactions)"
+        )
+    else:
+        clauses.append(f"sender's first observed transaction, amount GHS {row.amount:,.2f}")
+    if row.user_txn_count_last_1 >= 3:
+        clauses.append(f"{int(row.user_txn_count_last_1)} transactions from this sender in the last hour")
+    if row.is_new_counterparty:
+        clauses.append("first-ever transaction to this receiver")
+    if row.sender_device_changed_this_txn:
+        clauses.append("sent from a device never seen on this account before")
+    if row.receiver_incoming_count_so_far >= 5 and row.receiver_fanin_ratio > 0.5:
+        clauses.append(
+            f"receiver has taken money from {int(row.receiver_distinct_senders_so_far)} different senders "
+            f"across {int(row.receiver_incoming_count_so_far)} incoming transactions"
+        )
+    return clauses
+
+
+def _build_explanation(row, fired_names, prob):
+    """Builds the human-readable block_reason for one row: named-rule
+    phrases first (most specific), then behavioral context against the
+    sender/receiver's own history, deduped and capped so it stays
+    readable in the UI."""
+    clauses = [_RULE_PHRASES[name](row) for name in fired_names if name in _RULE_PHRASES]
+    amount_already_covered = "extreme_amount_vs_self" in fired_names or "legacy_amount_cutoff" in fired_names
+    for c in _behavior_clauses(row, skip_amount_clause=amount_already_covered):
+        if c not in clauses:
+            clauses.append(c)
+    if not fired_names:
+        clauses.insert(0, f"ensemble model estimated a {prob:.0%} fraud probability (no single rule fired)")
+    return "; ".join(clauses[:4])
+
+
 class CalibratedUnsupervised:
     """Wraps a fitted unsupervised sklearn model (IsolationForest, or
     LocalOutlierFactor with novelty=True) with min/max bounds captured from
@@ -132,10 +220,16 @@ def score_ensemble(feat_df: pd.DataFrame, components: dict) -> pd.DataFrame:
     # account with no history for the unsupervised models to compare
     # against.
     blocked = (final_prob >= config.BLOCK_THRESHOLD) | rule_severe
-    block_reason = np.where(
-        rule_severe, ("rule_engine: " + rule_reasons.astype(str)).to_numpy(),
-        np.where(blocked, "ensemble_probability_threshold", ""),
-    )
+    flagged = final_prob >= config.ALERT_THRESHOLD
+
+    # block_reason is populated for every FLAGGED-or-blocked row (not just
+    # blocked ones) - see _build_explanation - so the dashboard's
+    # transaction detail view always has something to show for "why".
+    fired_lists = [[n.strip() for n in r.split(",") if n.strip()] for r in rule_reasons]
+    block_reason = [
+        _build_explanation(row, fired, prob) if (flagged[i] or blocked[i]) else ""
+        for i, (row, fired, prob) in enumerate(zip(feat_df.itertuples(index=False), fired_lists, final_prob))
+    ]
 
     out = feat_df.copy()
     out["xgb_probability"] = xgb_prob
@@ -144,7 +238,7 @@ def score_ensemble(feat_df: pd.DataFrame, components: dict) -> pd.DataFrame:
     out["rule_score"] = rule_score
     out["rule_reasons"] = rule_reasons.to_numpy()
     out["fraud_probability"] = final_prob
-    out["flagged"] = (final_prob >= config.ALERT_THRESHOLD).astype(int)
+    out["flagged"] = flagged.astype(int)
     out["blocked"] = blocked
     out["block_reason"] = block_reason
     return out

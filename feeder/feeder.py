@@ -8,8 +8,10 @@ monitor.py watches and scores.
 
 Picks real existing users/devices from the database (so foreign keys are
 valid) and generates plausible new transactions between them, occasionally
-injecting a deliberately fraud-like transaction (sudden large amount,
-account-draining pattern) so you can verify the monitor actually catches it.
+injecting a deliberately fraud-like transaction - either a sudden large
+account-draining amount, or a SIM-swap pattern (the sender's SIM gets
+re-paired to a brand new device, then immediately drained) - so you can
+verify the monitor actually catches both.
 
 This is also where PREVENTION becomes visible end to end: monitor.py
 suspends (kyc_status -> 'suspended') the sender of any hard-blocked
@@ -77,7 +79,43 @@ def fetch_suspended_users(conn):
         return {r[0] for r in cur.fetchall()}
 
 
-def generate_batch(user_ids, eligible_senders, user_to_imei, last_balance, step, batch_size, fraud_rate, rng):
+def swap_device(conn, user_id, rng):
+    """Simulates a SIM swap / device change for one user: retires their
+    current subscriber_device_links row and pairs their SIM with a brand
+    new device (new random IMEI). Returns the new IMEI. This is what gives
+    ml/rules.py's device_change_then_large_txn rule something real to
+    catch - without an actual change event, sender_imei never differs
+    from a user's stored profile and the rule can never fire."""
+    new_imei = "".join(str(rng.randint(0, 9)) for _ in range(15))
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.subscriber_id FROM subscriber_device_links l
+            JOIN subscribers s ON s.subscriber_id = l.subscriber_id
+            WHERE s.user_id = %s AND l.is_current = TRUE
+        """, (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        subscriber_id = row[0]
+
+        cur.execute("""
+            UPDATE subscriber_device_links SET is_current = FALSE, last_seen_at = now()
+            WHERE subscriber_id = %s AND is_current = TRUE
+        """, (subscriber_id,))
+        cur.execute("""
+            INSERT INTO devices (imei, manufacturer, model)
+            VALUES (%s, 'Unknown', 'Unknown') RETURNING device_id
+        """, (new_imei,))
+        device_id = cur.fetchone()[0]
+        cur.execute("""
+            INSERT INTO subscriber_device_links (subscriber_id, device_id, is_current)
+            VALUES (%s, %s, TRUE)
+        """, (subscriber_id, device_id))
+    conn.commit()
+    return new_imei
+
+
+def generate_batch(conn, user_ids, eligible_senders, user_to_imei, last_balance, step, batch_size, fraud_rate, rng):
     """eligible_senders: user_ids minus anyone currently suspended - a
     suspended account can still receive (e.g. incoming refunds/investigation
     holds don't have to bounce), but can no longer originate a transaction."""
@@ -92,7 +130,17 @@ def generate_batch(user_ids, eligible_senders, user_to_imei, last_balance, step,
         is_injected_fraud = rng.random() < fraud_rate
         sender_old = float(last_balance.get(sender, rng.uniform(200, 5000)))
 
-        if is_injected_fraud:
+        if is_injected_fraud and rng.random() < 0.5:
+            # SIM-swap fraud: sender's SIM gets paired with a brand new
+            # device, then immediately drained - the swap-then-drain
+            # playbook device_change_then_large_txn is meant to catch.
+            new_imei = swap_device(conn, sender, rng)
+            if new_imei:
+                user_to_imei[sender] = new_imei
+            txn_type = rng.choice(["TRANSFER", "CASH_OUT"])
+            amount = max(sender_old * rng.uniform(0.85, 1.0), rng.uniform(2000, 8000))
+            sender_new = max(sender_old - amount, 0.0)
+        elif is_injected_fraud:
             # Classic drain pattern: large transfer/cash-out that empties the account
             txn_type = rng.choice(["TRANSFER", "CASH_OUT"])
             amount = max(sender_old * rng.uniform(0.85, 1.0), rng.uniform(2000, 8000))
@@ -167,7 +215,7 @@ def main():
             eligible_senders = [u for u in user_ids if u not in suspended]
 
             rows, step = generate_batch(
-                user_ids, eligible_senders, user_to_imei, last_balance, step,
+                conn, user_ids, eligible_senders, user_to_imei, last_balance, step,
                 args.batch_size, args.fraud_rate, rng,
             )
             if rows:

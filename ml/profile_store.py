@@ -30,6 +30,11 @@ DEFAULT_PROFILE = {
     "sender_distinct_receivers": 0,
     "receiver_incoming_count": 0,
     "receiver_distinct_senders": 0,
+    # SIM-swap / device-cloning detection: the IMEI seen on this sender's
+    # last transaction, and when their device last changed (None = never
+    # observed a change) - see ml/online_features.py.
+    "sender_last_imei": None,
+    "sender_last_device_change_step": None,
 }
 
 PROFILE_COLUMNS = list(DEFAULT_PROFILE.keys())
@@ -78,6 +83,7 @@ def upsert_profiles(conn, profiles: dict):
             p["sender_txn_count"], p["sender_amount_mean"], p["sender_amount_m2"],
             p["sender_amount_max"], p["sender_last_txn_step"], p["sender_distinct_receivers"],
             p["receiver_incoming_count"], p["receiver_distinct_senders"],
+            p["sender_last_imei"], p["sender_last_device_change_step"],
             dt.datetime.now(),
         )
         for uid, p in profiles.items()
@@ -87,7 +93,8 @@ def upsert_profiles(conn, profiles: dict):
             INSERT INTO user_profiles (
                 user_id, sender_txn_count, sender_amount_mean, sender_amount_m2,
                 sender_amount_max, sender_last_txn_step, sender_distinct_receivers,
-                receiver_incoming_count, receiver_distinct_senders, updated_at
+                receiver_incoming_count, receiver_distinct_senders,
+                sender_last_imei, sender_last_device_change_step, updated_at
             ) VALUES %s
             ON CONFLICT (user_id) DO UPDATE SET
                 sender_txn_count = EXCLUDED.sender_txn_count,
@@ -98,6 +105,8 @@ def upsert_profiles(conn, profiles: dict):
                 sender_distinct_receivers = EXCLUDED.sender_distinct_receivers,
                 receiver_incoming_count = EXCLUDED.receiver_incoming_count,
                 receiver_distinct_senders = EXCLUDED.receiver_distinct_senders,
+                sender_last_imei = EXCLUDED.sender_last_imei,
+                sender_last_device_change_step = EXCLUDED.sender_last_device_change_step,
                 updated_at = EXCLUDED.updated_at
         """, rows)
     conn.commit()

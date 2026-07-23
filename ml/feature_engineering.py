@@ -105,10 +105,19 @@ def load_and_standardize(raw_df: pd.DataFrame) -> pd.DataFrame:
                 "receiver_balance_old", "receiver_balance_new"):
         df[col] = df[col].astype(float)
 
+    # sender_imei/receiver_imei: only present when raw_df comes from the DB
+    # export (export_transactions_from_db.py's BASE_QUERY) - data/synthetic.csv's
+    # plain PaySim-style shape has no device columns at all. Filled with None
+    # so the SIM-swap/device-change feature in online_features.py degrades to
+    # "no signal" rather than erroring on CSV-only (offline training) input.
+    for col in ("sender_imei", "receiver_imei"):
+        df[col] = raw_df[col] if col in raw_df.columns else None
+
     return df[[
         "txn_id", "timestamp", "sender_id", "receiver_id", "amount", "txn_type",
         "sender_balance_old", "sender_balance_new",
         "receiver_balance_old", "receiver_balance_new", "label",
+        "sender_imei", "receiver_imei",
     ]]
 
 
