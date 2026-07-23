@@ -1,47 +1,52 @@
 :root {
   color-scheme: light;
-  --surface-0: #faf3e2;
-  --surface-1: #fdf9ef;
-  --surface-2: #f1e7d2;
+  --surface-0: #eeeee6;
+  --surface-1: #f6f6f0;
+  --surface-2: #e2e2d8;
   --text-primary: #0b0b0b;
-  --text-secondary: #52514e;
-  --text-muted: #8c8570;
-  --gridline: #e8dec4;
-  --border: rgba(11, 11, 11, 0.1);
+  --text-secondary: #4a4a44;
+  --text-muted: #85857a;
+  --gridline: #c9c9bc;
+  --border: #0b0b0b;
 
-  --series-1: #2a78d6; /* blue */
-  --series-2: #008300; /* green */
-  --series-3: #e87ba4; /* magenta */
-  --series-4: #eda100; /* yellow */
-  --series-5: #1baf7a; /* aqua */
-  --series-6: #eb6834; /* orange */
+  --series-1: #2a78d6;
+  --series-2: #007a3d;
+  --series-3: #a3336f;
+  --series-4: #97650a;
+  --series-5: #0d8c68;
+  --series-6: #b34d1a;
 
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #d03b3b;
+  --status-good: #0a7d2c;
+  --status-warning: #97650a;
+  --status-serious: #b34d1a;
+  --status-critical: #b3261e;
 
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --surface-0: #0d0d0d;
-    --surface-1: #1a1a19;
-    --surface-2: #232322;
-    --text-primary: #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted: #898781;
-    --gridline: #2c2c2a;
-    --border: rgba(255, 255, 255, 0.1);
+    --surface-0: #000000;
+    --surface-1: #0a0d0a;
+    --surface-2: #12160f;
+    --text-primary: #d6d9ce;
+    --text-secondary: #8a9080;
+    --text-muted: #5c6156;
+    --gridline: #22261f;
+    --border: #2c332a;
 
-    --series-1: #3987e5;
-    --series-2: #008300;
-    --series-3: #d55181;
-    --series-4: #c98500;
-    --series-5: #199e70;
-    --series-6: #d95926;
+    --series-1: #6ab0ff;
+    --series-2: #4fd17a;
+    --series-3: #e08bc0;
+    --series-4: #e0b34f;
+    --series-5: #4fe0c4;
+    --series-6: #e0895a;
+
+    --status-good: #4fd17a;
+    --status-warning: #e0b34f;
+    --status-serious: #e0895a;
+    --status-critical: #ff6b5e;
   }
 }
 
@@ -60,6 +65,8 @@ body {
   background: var(--surface-0);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 table {
