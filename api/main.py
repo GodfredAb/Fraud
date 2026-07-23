@@ -40,10 +40,12 @@ app = FastAPI(title="Mobile Money Fraud Detection API")
 
 # The React dev server runs on a different origin (5173) than this API
 # (8000) - CORS has to be explicit for the browser to allow the fetches.
-# Tighten allow_origins to your deployed frontend's origin in production.
+# In production, set FRONTEND_ORIGIN to the deployed frontend's origin
+# (e.g. https://your-app.vercel.app) instead of allowing every origin.
+_frontend_origin = os.environ.get("FRONTEND_ORIGIN")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[_frontend_origin] if _frontend_origin else ["*"],
     allow_methods=["GET"],
     allow_headers=["*"],
 )

@@ -9,7 +9,8 @@ dist/
 
 # Generated, environment-specific artifacts - reproducible via the pipeline.
 # data/synthetic.csv and outputs/model_comparison.csv are kept as checked-in
-# reference artifacts (the README points to both directly).
+# reference artifacts (the README points to both directly). models/*.json
+# (xgboost_model.json, feature_list.json) are also kept checked-in - monitor.py
+# loads them at startup and a git-based deploy needs them present.
 data/from_db.csv
-models/*.json
 .claude/
