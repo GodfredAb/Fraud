@@ -71,6 +71,7 @@ def health():
         query("SELECT 1")
         return {"status": "ok", "time": dt.datetime.now().isoformat()}
     except Exception as e:
+        print(f"[health check] DB connection failed: {e!r}", flush=True)
         raise HTTPException(status_code=503, detail=str(e))
 
 
