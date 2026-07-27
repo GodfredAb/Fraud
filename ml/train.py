@@ -124,13 +124,20 @@ def main(raw_path: str):
     UNSUPERVISED_KEYS = ("isolation_forest", "local_outlier_factor")
     baselines = get_baseline_suite(train_fraud_rate=y_train.mean())
     for key, model in baselines.items():
-        if key in UNSUPERVISED_KEYS:
-            model.fit(X_train)  # unsupervised - no labels used
-        else:
-            model.fit(X_train, y_train)
+        # RuleEngine reads whatever columns its rule predicates reference
+        # (e.g. sender_hours_since_device_change), not just FEATURE_COLUMNS
+        # - the same full feature table ensemble.py hands it live. Every
+        # other baseline is a plain sklearn-style model restricted to the
+        # numeric FEATURE_COLUMNS/one-hot matrix.
+        fit_X, eval_X = (train_df, test_df) if key == "rule_based" else (X_train, X_test)
 
-        probs = model.predict_proba_fraud(X_test)
-        flags = model.predict_flag(X_test) if hasattr(model, "predict_flag") else (probs >= config.ALERT_THRESHOLD).astype(int)
+        if key in UNSUPERVISED_KEYS:
+            model.fit(fit_X)  # unsupervised - no labels used
+        else:
+            model.fit(fit_X, y_train)
+
+        probs = model.predict_proba_fraud(eval_X)
+        flags = model.predict_flag(eval_X) if hasattr(model, "predict_flag") else (probs >= config.ALERT_THRESHOLD).astype(int)
         results.append(evaluate(model.name, y_test, probs, flags))
         print(f"  done: {model.name}")
 
