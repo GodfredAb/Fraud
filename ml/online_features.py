@@ -103,10 +103,11 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
 
         hist = recent_history.setdefault(sender, [])
         velocity_counts = {}
+        amount_sums = {}
         for w in windows:
-            velocity_counts[f"user_txn_count_last_{w}"] = sum(
-                1 for t in hist if row.timestamp - w <= t < row.timestamp
-            )
+            window_amounts = [a for t, a in hist if row.timestamp - w <= t < row.timestamp]
+            velocity_counts[f"user_txn_count_last_{w}"] = len(window_amounts)
+            amount_sums[f"user_amount_sum_last_{w}"] = sum(window_amounts)
 
         out_rows.append({
             "txn_id": row.txn_id,
@@ -132,6 +133,7 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
             "amount_zscore_vs_self": zscore,
             "time_since_last_txn": gap,
             **velocity_counts,
+            **amount_sums,
             "user_distinct_receivers_so_far": ps["sender_distinct_receivers"],
             "is_new_counterparty": is_new_counterparty,
             "receiver_incoming_count_so_far": pr["receiver_incoming_count"],
@@ -148,7 +150,7 @@ def compute_batch_features(raw_batch_df, profiles: dict, seen_pairs: set, recent
         ps["sender_amount_m2"] = new_m2
         ps["sender_amount_max"] = max(cummax, row.amount)
         ps["sender_last_txn_step"] = row.timestamp
-        hist.append(row.timestamp)
+        hist.append((row.timestamp, row.amount))
 
         if row.sender_imei is not None:
             if device_changed:

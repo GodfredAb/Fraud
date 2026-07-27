@@ -112,6 +112,8 @@ RULE_FANIN_MIN_INCOMING_PERCENTILE = 90 # receiver_incoming_count_so_far - must 
 RULE_VELOCITY_1H_PERCENTILE = 99.5      # user_txn_count_last_1 - velocity-burst cutoff
 RULE_VELOCITY_MIN_COUNT = 5             # floor so a near-zero learned percentile doesn't make this hyperactive
 RULE_ZSCORE_THRESHOLD = 4.0             # amount_zscore_vs_self - already self-relative, not learned
+RULE_STRUCTURING_MIN_COUNT = 4          # user_txn_count_last_6 floor for the structuring/smurfing rule
+RULE_DORMANCY_HOURS = 336.0             # time_since_last_txn - 14 days; an absolute concept like RULE_ZSCORE_THRESHOLD, not population-relative, so not learned
 
 # ---------------------------------------------------------------------------
 # Prevention: once the final fraud_probability crosses this, OR the rule

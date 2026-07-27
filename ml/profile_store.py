@@ -153,18 +153,21 @@ def insert_new_pairs(conn, pairs):
 def fetch_recent_sender_history(conn, sender_ids, earliest_step: float, upper_step_exclusive: float):
     """Bounded query: only transactions from these specific senders with
     earliest_step <= txn_step < upper_step_exclusive (used to seed the
-    1h/6h/24h velocity features - 'hours' meaning units of the txn_step
-    counter, matching feature_engineering.py). The exclusive upper bound
-    ensures this never re-reads any transaction that is part of the
-    current pending batch itself (which the caller processes separately,
-    in order, via online_features.compute_batch_features).
+    1h/6h/24h velocity/amount-sum features - 'hours' meaning units of the
+    txn_step counter, matching feature_engineering.py). amount is included
+    alongside txn_step so online_features.py can compute windowed SUMS
+    (structuring/smurfing detection: many sub-threshold transactions that
+    add up to a large total), not just windowed COUNTS. The exclusive
+    upper bound ensures this never re-reads any transaction that is part
+    of the current pending batch itself (which the caller processes
+    separately, in order, via online_features.compute_batch_features).
     Uses idx_txn_sender_step - a fast range scan, not a full-table scan,
     no matter how large the transactions table grows."""
     if not sender_ids:
         return []
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT sender_user_id, txn_step
+            SELECT sender_user_id, txn_step, amount
             FROM transactions
             WHERE sender_user_id = ANY(%s)
               AND txn_step >= %s AND txn_step < %s

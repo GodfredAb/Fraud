@@ -85,8 +85,8 @@ def score_cycle(conn, components):
         upper_step_exclusive=batch_min_step,
     )
     recent_history = {}
-    for sender_id, step in recent_rows:
-        recent_history.setdefault(sender_id, []).append(float(step))
+    for sender_id, step, amount in recent_rows:
+        recent_history.setdefault(sender_id, []).append((float(step), float(amount)))
 
     # --- Compute causal features incrementally, updating profiles in place --
     feat_df, new_pairs = compute_batch_features(pending_df, profiles, seen_pairs, recent_history)

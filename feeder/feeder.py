@@ -8,10 +8,21 @@ monitor.py watches and scores.
 
 Picks real existing users/devices from the database (so foreign keys are
 valid) and generates plausible new transactions between them, occasionally
-injecting a deliberately fraud-like transaction - either a sudden large
-account-draining amount, or a SIM-swap pattern (the sender's SIM gets
-re-paired to a brand new device, then immediately drained) - so you can
-verify the monitor actually catches both.
+injecting one of five deliberately fraud-like patterns - see FRAUD_SUBTYPES
+below - so you can verify the monitor actually catches each one:
+
+  - drain:                 a single sudden large account-draining transaction
+  - sim_swap_drain:        the sender's SIM gets re-paired to a brand new
+                            device, then immediately drained
+  - structuring:           several individually-moderate transactions to
+                            different receivers in quick succession that sum
+                            to a large total - evades a single-transaction cutoff
+  - rapid_fanout:          several transactions to brand-new receivers in
+                            quick succession - spraying funds across
+                            multiple (possibly mule) accounts
+  - dormant_reactivation:  an account that's gone quiet the longest suddenly
+                            moves a large amount - a common account-takeover
+                            pattern
 
 This is also where PREVENTION becomes visible end to end: monitor.py
 suspends (kyc_status -> 'suspended') the sender of any hard-blocked
@@ -115,53 +126,163 @@ def swap_device(conn, user_id, rng):
     return new_imei
 
 
+def fetch_most_dormant_sender(conn, eligible_senders):
+    """Picks whichever eligible sender has gone longest since their last
+    transaction - used to inject a realistic dormant-account-reactivation
+    pattern (ml/rules.py's dormant_account_reactivated rule) instead of a
+    uniformly random pick, since a randomly-chosen sender is rarely
+    actually dormant. Deliberately excludes senders with NO transaction
+    history at all (a plain INNER-JOIN-shaped query via GROUP BY, not a
+    LEFT JOIN with a sentinel): the rule requires user_txn_count_so_far > 0
+    - a never-sent user always fails that guard, so picking one here would
+    just waste the injection. Returns (sender_id, last_step), or None
+    (caller falls back to a random pick) if no eligible sender has ever
+    sent anything yet."""
+    if not eligible_senders:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT sender_user_id, MAX(txn_step) AS last_step
+            FROM transactions
+            WHERE sender_user_id = ANY(%s)
+            GROUP BY sender_user_id
+            ORDER BY last_step ASC
+            LIMIT 1
+        """, (eligible_senders,))
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+
+def _make_row(step, txn_type, amount, sender, sender_old, sender_new, receiver, receiver_old, user_to_imei, is_fraud):
+    return (
+        step, dt.datetime.now(), txn_type, round(amount, 2),
+        sender, user_to_imei.get(sender), round(sender_old, 2), round(sender_new, 2),
+        receiver, user_to_imei.get(receiver), round(receiver_old, 2), round(receiver_old + amount, 2),
+        is_fraud,  # ground truth, for demo evaluation only - a real feed wouldn't know this yet
+    )
+
+
+def _drain_pattern(sender, receiver, sender_old, step, user_to_imei, rng):
+    """Classic pattern: one large transfer/cash-out that empties the account."""
+    txn_type = rng.choice(["TRANSFER", "CASH_OUT"])
+    amount = max(sender_old * rng.uniform(0.85, 1.0), rng.uniform(2000, 8000))
+    sender_new = max(sender_old - amount, 0.0)
+    row = _make_row(step, txn_type, amount, sender, sender_old, sender_new, receiver, rng.uniform(100, 4000), user_to_imei, True)
+    return [row], sender_new
+
+
+def _multi_receiver_pattern(sender, user_ids, sender_old, step, user_to_imei, amount_fn, rng):
+    """Shared shape for structuring and rapid_fanout: several TRANSFERs from
+    one sender to DIFFERENT receivers, 1 step apart (close enough together
+    to land in each other's 6h window - see ml/rules.py's velocity_6h_cutoff
+    comment for why 1 step apart, not the same step)."""
+    k = rng.randint(3, 5)
+    others = [u for u in user_ids if u != sender]
+    receivers = rng.sample(others, min(k, len(others)))
+    rows = []
+    bal = sender_old
+    for i, receiver in enumerate(receivers):
+        amount = amount_fn(bal, rng)
+        new_bal = max(bal - amount, 0.0)
+        rows.append(_make_row(step + i, "TRANSFER", amount, sender, bal, new_bal, receiver, rng.uniform(100, 4000), user_to_imei, True))
+        bal = new_bal
+    return rows, bal
+
+
+def _structuring_pattern(sender, user_ids, sender_old, step, user_to_imei, rng):
+    """Several individually-moderate transactions that sum to a large
+    total - evades a single-transaction amount cutoff."""
+    def amount_fn(bal, rng):
+        amt = rng.uniform(300, 900)
+        return min(amt, bal) if bal > 0 else amt
+    return _multi_receiver_pattern(sender, user_ids, sender_old, step, user_to_imei, amount_fn, rng)
+
+
+def _rapid_fanout_pattern(sender, user_ids, sender_old, step, user_to_imei, rng):
+    """Several transactions to brand-new receivers in quick succession -
+    spraying funds across multiple (possibly mule) accounts."""
+    def amount_fn(bal, rng):
+        amt = float(np.random.exponential(250))
+        return min(amt, bal) if bal > 0 else amt
+    return _multi_receiver_pattern(sender, user_ids, sender_old, step, user_to_imei, amount_fn, rng)
+
+
+FRAUD_SUBTYPES = ("drain", "sim_swap_drain", "structuring", "rapid_fanout", "dormant_reactivation")
+FRAUD_SUBTYPE_WEIGHTS = (0.30, 0.20, 0.20, 0.20, 0.10)
+
+
 def generate_batch(conn, user_ids, eligible_senders, user_to_imei, last_balance, step, batch_size, fraud_rate, rng):
     """eligible_senders: user_ids minus anyone currently suspended - a
     suspended account can still receive (e.g. incoming refunds/investigation
-    holds don't have to bounce), but can no longer originate a transaction."""
+    holds don't have to bounce), but can no longer originate a transaction.
+    Multi-row fraud subtypes (structuring, rapid_fanout) can push total rows
+    per batch above batch_size - the loop below counts ITERATIONS, not rows,
+    same as it always has, so a batch that rolls one of those patterns simply
+    ends up a little larger than usual."""
     rows = []
     for _ in range(batch_size):
         if len(eligible_senders) < 1 or len(user_ids) < 2:
             break
-        sender = rng.choice(eligible_senders)
-        receiver = rng.choice([u for u in user_ids if u != sender])
-        txn_type = rng.choices(TXN_TYPES, weights=TXN_TYPE_WEIGHTS, k=1)[0]
 
         is_injected_fraud = rng.random() < fraud_rate
+        subtype = rng.choices(FRAUD_SUBTYPES, weights=FRAUD_SUBTYPE_WEIGHTS, k=1)[0] if is_injected_fraud else None
+
+        if subtype == "dormant_reactivation":
+            found = fetch_most_dormant_sender(conn, eligible_senders)
+            if found:
+                sender, _ = found  # the numeric last_step doesn't matter here - see row_step below
+            else:
+                sender = rng.choice(eligible_senders)
+                subtype = "drain"  # no one has ever sent yet - just an ordinary drain
+        else:
+            sender = rng.choice(eligible_senders)
         sender_old = float(last_balance.get(sender, rng.uniform(200, 5000)))
 
-        if is_injected_fraud and rng.random() < 0.5:
+        if subtype == "sim_swap_drain":
             # SIM-swap fraud: sender's SIM gets paired with a brand new
             # device, then immediately drained - the swap-then-drain
             # playbook device_change_then_large_txn is meant to catch.
             new_imei = swap_device(conn, sender, rng)
             if new_imei:
                 user_to_imei[sender] = new_imei
-            txn_type = rng.choice(["TRANSFER", "CASH_OUT"])
-            amount = max(sender_old * rng.uniform(0.85, 1.0), rng.uniform(2000, 8000))
-            sender_new = max(sender_old - amount, 0.0)
-        elif is_injected_fraud:
-            # Classic drain pattern: large transfer/cash-out that empties the account
-            txn_type = rng.choice(["TRANSFER", "CASH_OUT"])
-            amount = max(sender_old * rng.uniform(0.85, 1.0), rng.uniform(2000, 8000))
-            sender_new = max(sender_old - amount, 0.0)
+            receiver = rng.choice([u for u in user_ids if u != sender])
+            new_rows, sender_new = _drain_pattern(sender, receiver, sender_old, step, user_to_imei, rng)
+        elif subtype == "dormant_reactivation":
+            # Same shape as drain, but the whole simulation clock jumps
+            # forward by 340-500 steps for this one event, guaranteeing a
+            # gap of at least that size vs this sender's real last
+            # transaction (dormant_last_step <= the current step, since
+            # it's in the past) - real dormancy this long can't occur
+            # organically here (100 users picked near-uniformly every
+            # transaction means no one goes unselected for anywhere near
+            # 336 steps by chance), so the injection forces it directly.
+            # Advancing the SHARED clock (not just this row's own step)
+            # matters: if only this row were aged forward while the clock
+            # stayed behind, a later ordinary pick of this same sender
+            # could land a smaller step in between (or even one indicating
+            # a negative time gap once scored) - fast-forwarding the whole
+            # clock rules that out for every sender, not just this one.
+            receiver = rng.choice([u for u in user_ids if u != sender])
+            row_step = round(step + rng.uniform(340, 500))
+            new_rows, sender_new = _drain_pattern(sender, receiver, sender_old, row_step, user_to_imei, rng)
+        elif subtype == "drain":
+            receiver = rng.choice([u for u in user_ids if u != sender])
+            new_rows, sender_new = _drain_pattern(sender, receiver, sender_old, step, user_to_imei, rng)
+        elif subtype == "structuring":
+            new_rows, sender_new = _structuring_pattern(sender, user_ids, sender_old, step, user_to_imei, rng)
+        elif subtype == "rapid_fanout":
+            new_rows, sender_new = _rapid_fanout_pattern(sender, user_ids, sender_old, step, user_to_imei, rng)
         else:
+            receiver = rng.choice([u for u in user_ids if u != sender])
+            txn_type = rng.choices(TXN_TYPES, weights=TXN_TYPE_WEIGHTS, k=1)[0]
             amount = float(np.random.exponential(180))
             amount = min(amount, sender_old) if sender_old > 0 else amount
             sender_new = max(sender_old - amount, 0.0)
-
-        receiver_old = rng.uniform(100, 4000)
-        receiver_new = receiver_old + amount
+            new_rows = [_make_row(step, txn_type, amount, sender, sender_old, sender_new, receiver, rng.uniform(100, 4000), user_to_imei, False)]
 
         last_balance[sender] = sender_new
-
-        rows.append((
-            step, dt.datetime.now(), txn_type, round(amount, 2),
-            sender, user_to_imei.get(sender), round(sender_old, 2), round(sender_new, 2),
-            receiver, user_to_imei.get(receiver), round(receiver_old, 2), round(receiver_new, 2),
-            is_injected_fraud,  # ground truth, for demo evaluation only - a real feed wouldn't know this yet
-        ))
-        step += 1
+        rows.extend(new_rows)
+        step = row_step + 1 if subtype == "dormant_reactivation" else step + len(new_rows)
     return rows, step
 
 

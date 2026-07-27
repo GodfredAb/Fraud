@@ -68,10 +68,24 @@ _RULE_PHRASES = {
         + f", immediately followed by a large GHS {r.amount:,.2f} {'cash-out' if r.is_cash_out_or_transfer else 'transfer'} "
         "- matches a SIM-swap / device-takeover pattern"
     ),
+    "structuring_pattern": lambda r: (
+        f"{int(r.user_txn_count_last_6)} transactions from this sender in quick succession totaling "
+        f"GHS {r.user_amount_sum_last_6:,.2f} - each individually small (this one GHS {r.amount:,.2f}) but "
+        "the sum matches a structuring/smurfing pattern used to duck a single-transaction cutoff"
+    ),
+    "dormant_account_reactivated": lambda r: (
+        f"sender was inactive for {r.time_since_last_txn:.0f}h (~{r.time_since_last_txn / 24:.0f} days) "
+        f"then moved GHS {r.amount:,.2f} - matches an account-takeover-then-drain pattern"
+    ),
+    "rapid_fanout_new_counterparty": lambda r: (
+        f"sent to a brand-new receiver while already in a velocity burst "
+        f"({int(r.user_txn_count_last_6)} transactions from this sender in quick succession) - matches funds "
+        "being sprayed out across multiple new (possibly mule) accounts"
+    ),
 }
 
 
-def _behavior_clauses(row, skip_amount_clause=False):
+def _behavior_clauses(row, skip_amount_clause=False, skip_velocity_clause=False, skip_new_counterparty_clause=False):
     """Clauses describing THIS transaction against the sender/receiver's
     own learned history (see profile_store.py/online_features.py) -
     included even when no named rule fired, so a flag is never explained
@@ -88,9 +102,9 @@ def _behavior_clauses(row, skip_amount_clause=False):
         )
     else:
         clauses.append(f"sender's first observed transaction, amount GHS {row.amount:,.2f}")
-    if row.user_txn_count_last_1 >= 3:
+    if row.user_txn_count_last_1 >= 3 and not skip_velocity_clause:
         clauses.append(f"{int(row.user_txn_count_last_1)} transactions from this sender in the last hour")
-    if row.is_new_counterparty:
+    if row.is_new_counterparty and not skip_new_counterparty_clause:
         clauses.append("first-ever transaction to this receiver")
     if row.sender_device_changed_this_txn:
         clauses.append("sent from a device never seen on this account before")
@@ -109,7 +123,15 @@ def _build_explanation(row, fired_names, prob):
     readable in the UI."""
     clauses = [_RULE_PHRASES[name](row) for name in fired_names if name in _RULE_PHRASES]
     amount_already_covered = "extreme_amount_vs_self" in fired_names or "legacy_amount_cutoff" in fired_names
-    for c in _behavior_clauses(row, skip_amount_clause=amount_already_covered):
+    velocity_already_covered = (
+        "velocity_burst" in fired_names or "structuring_pattern" in fired_names
+        or "rapid_fanout_new_counterparty" in fired_names
+    )
+    new_counterparty_already_covered = "rapid_fanout_new_counterparty" in fired_names
+    for c in _behavior_clauses(
+        row, skip_amount_clause=amount_already_covered, skip_velocity_clause=velocity_already_covered,
+        skip_new_counterparty_clause=new_counterparty_already_covered,
+    ):
         if c not in clauses:
             clauses.append(c)
     if not fired_names:

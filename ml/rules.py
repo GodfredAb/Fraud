@@ -46,6 +46,8 @@ class RuleEngine:
         self.fanin_ratio_cutoff = None
         self.fanin_min_incoming = None
         self.velocity_1h_cutoff = None
+        self.velocity_6h_cutoff = None
+        self.structuring_sum_cutoff = None
 
     def fit(self, X, y=None):
         self.legacy_amount_cutoff = float(np.percentile(X["amount"], config.RULE_LEGACY_AMOUNT_PERCENTILE))
@@ -78,6 +80,25 @@ class RuleEngine:
         self.velocity_1h_cutoff = max(
             float(np.percentile(X["user_txn_count_last_1"], config.RULE_VELOCITY_1H_PERCENTILE)),
             config.RULE_VELOCITY_MIN_COUNT,
+        )
+        # A 6h-window cutoff, fit the same way - structuring_pattern and
+        # rapid_fanout_new_counterparty use this instead of the 1h cutoff
+        # above: feeder.py's live simulation advances txn_step by exactly 1
+        # per transaction (not per real hour), so a short burst of several
+        # back-to-back transactions from one sender only reliably falls
+        # inside each other's 6h window, not the much narrower 1h one.
+        self.velocity_6h_cutoff = max(
+            float(np.percentile(X["user_txn_count_last_6"], config.RULE_VELOCITY_1H_PERCENTILE)),
+            config.RULE_VELOCITY_MIN_COUNT,
+        )
+        # Fit directly on the windowed SUM's own distribution rather than
+        # reusing large_amount_cutoff (fit on individual amounts) - a sum
+        # of several transactions is a different distribution than any one
+        # of them, and reusing the single-transaction cutoff badly
+        # under-shoots it, letting ordinary bursts of legitimate small
+        # payments trip structuring_pattern.
+        self.structuring_sum_cutoff = float(
+            np.percentile(X["user_amount_sum_last_6"], config.RULE_LARGE_AMOUNT_PERCENTILE)
         )
         return self
 
@@ -150,6 +171,40 @@ class RuleEngine:
                 lambda df: (df["sender_hours_since_device_change"] <= 24)
                 & (df["amount"] > self.large_amount_cutoff)
                 & (df["is_cash_out_or_transfer"] == 1)),
+            # Structuring / smurfing: several individually sub-threshold
+            # transactions from the same sender within the last hour that
+            # ADD UP to a large total - the classic technique for evading a
+            # single-transaction amount cutoff. Deliberately not severe:
+            # unlike the device-swap combination above, a burst of
+            # legitimate small payments (e.g. paying several bills in a
+            # row) can plausibly produce this same shape, so it should
+            # weigh into the blended probability rather than force a block
+            # on its own.
+            ("structuring_pattern", 0.4, False,
+                lambda df: (df["user_amount_sum_last_6"] > self.structuring_sum_cutoff)
+                & (df["amount"] <= self.legacy_amount_cutoff)
+                & (df["user_txn_count_last_6"] >= config.RULE_STRUCTURING_MIN_COUNT)),
+            # Dormant account reactivation: an account that has gone quiet
+            # for RULE_DORMANCY_HOURS (14 days) suddenly moves a large
+            # amount - a common account-takeover pattern (attacker gains
+            # access to a rarely-used account and empties it before the
+            # owner notices). Requires user_txn_count_so_far > 0 so a
+            # brand-new account's first-ever transaction (which also reads
+            # as a large "time since last txn" via the default sentinel -
+            # see online_features.py) is never mistaken for dormancy.
+            ("dormant_account_reactivated", 0.5, False,
+                lambda df: (df["user_txn_count_so_far"] > 0)
+                & (df["time_since_last_txn"] >= config.RULE_DORMANCY_HOURS)
+                & (df["amount"] > self.large_amount_cutoff)),
+            # Rapid fan-out: transacting to a brand-new counterparty WHILE
+            # already in a velocity burst - the mirror image of
+            # mule_fanin_pattern (many senders into one receiver): here one
+            # sender sprays funds out to many different new receivers in a
+            # short window, e.g. distributing stolen funds across several
+            # mule accounts before any one of them is flagged.
+            ("rapid_fanout_new_counterparty", 0.4, False,
+                lambda df: (df["is_new_counterparty"] == 1)
+                & (df["user_txn_count_last_6"] >= self.velocity_6h_cutoff)),
         ]
 
     def evaluate(self, df: pd.DataFrame):
