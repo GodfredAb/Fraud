@@ -29,66 +29,48 @@ import config
 from rules import RuleEngine  # noqa: F401 - needed to unpickle a saved RuleEngine
 
 
-# Human-readable phrasing for each named rule in rules.py's
-# _rule_definitions, given the feature row that fired it - so the alert
+# Short, technical phrasing for each named rule in rules.py's
+# _rule_definitions, given the feature row that fired it - the alert
 # queue/detail view explains WHAT was unusual, in the same terms the rule
-# itself evaluated, not just which rule's name matched.
+# itself evaluated, not just which rule's name matched. Kept terse
+# (fragment, not prose) since _build_explanation joins several of these.
 _RULE_PHRASES = {
-    "legacy_amount_cutoff": lambda r: (
-        f"amount GHS {r.amount:,.2f} is above the large-transaction cutoff learned from this population"
-    ),
+    "legacy_amount_cutoff": lambda r: f"amount GHS {r.amount:,.2f} > P95 cutoff",
     "balance_mismatch": lambda r: (
-        f"ledger mismatch of GHS {max(abs(r.sender_balance_error), abs(r.receiver_balance_error)):,.2f} "
-        "between the recorded balances and the transaction amount"
+        f"ledger mismatch GHS {max(abs(r.sender_balance_error), abs(r.receiver_balance_error)):,.2f}"
     ),
-    "insufficient_funds_executed": lambda r: (
-        "transaction went through even though the amount exceeded the sender's balance beforehand"
-    ),
-    "account_drained": lambda r: (
-        f"sender's account was emptied to GHS 0 by this GHS {r.amount:,.2f} transaction"
-    ),
+    "insufficient_funds_executed": lambda r: "amount > balance (insufficient funds)",
+    "account_drained": lambda r: f"account drained to GHS 0 (-{r.amount:,.2f})",
     "extreme_amount_vs_self": lambda r: (
-        f"amount is {r.amount_zscore_vs_self:.1f} standard deviations above this sender's own average "
-        f"(GHS {r.amount:,.2f} vs their usual GHS {r.user_amount_cummean:,.2f})"
+        f"{r.amount_zscore_vs_self:.1f}sigma vs self-avg GHS {r.user_amount_cummean:,.2f}"
     ),
-    "velocity_burst": lambda r: (
-        f"{int(r.user_txn_count_last_1)} transactions from this sender in the last hour - well above their normal pace"
-    ),
-    "new_counterparty_large_night_cashout": lambda r: (
-        "large cash-out to a brand-new counterparty, sent during night hours"
-    ),
+    "velocity_burst": lambda r: f"{int(r.user_txn_count_last_1)} txns/1h (velocity burst)",
+    "new_counterparty_large_night_cashout": lambda r: "large night cash-out, new counterparty",
     "mule_fanin_pattern": lambda r: (
-        f"receiver shows a money-mule fan-in pattern ({int(r.receiver_distinct_senders_so_far)} distinct senders "
-        f"across {int(r.receiver_incoming_count_so_far)} incoming transactions)"
+        f"mule fan-in: {int(r.receiver_distinct_senders_so_far)} senders/"
+        f"{int(r.receiver_incoming_count_so_far)} txns"
     ),
     "device_change_then_large_txn": lambda r: (
-        "sender's device changed "
-        + ("on this very transaction" if r.sender_hours_since_device_change < 1
-           else f"{r.sender_hours_since_device_change:.1f}h ago")
-        + f", immediately followed by a large GHS {r.amount:,.2f} {'cash-out' if r.is_cash_out_or_transfer else 'transfer'} "
-        "- matches a SIM-swap / device-takeover pattern"
+        "device changed "
+        + ("this txn" if r.sender_hours_since_device_change < 1 else f"{r.sender_hours_since_device_change:.0f}h ago")
+        + f" + GHS {r.amount:,.2f} cash-out (SIM-swap pattern)"
     ),
     "structuring_pattern": lambda r: (
-        f"{int(r.user_txn_count_last_6)} transactions from this sender in quick succession totaling "
-        f"GHS {r.user_amount_sum_last_6:,.2f} - each individually small (this one GHS {r.amount:,.2f}) but "
-        "the sum matches a structuring/smurfing pattern used to duck a single-transaction cutoff"
+        f"{int(r.user_txn_count_last_6)} txns/GHS {r.user_amount_sum_last_6:,.2f} sum (structuring)"
     ),
     "dormant_account_reactivated": lambda r: (
-        f"sender was inactive for {r.time_since_last_txn:.0f}h (~{r.time_since_last_txn / 24:.0f} days) "
-        f"then moved GHS {r.amount:,.2f} - matches an account-takeover-then-drain pattern"
+        f"dormant {r.time_since_last_txn / 24:.0f}d, then GHS {r.amount:,.2f} (reactivation)"
     ),
     "rapid_fanout_new_counterparty": lambda r: (
-        f"sent to a brand-new receiver while already in a velocity burst "
-        f"({int(r.user_txn_count_last_6)} transactions from this sender in quick succession) - matches funds "
-        "being sprayed out across multiple new (possibly mule) accounts"
+        f"new counterparty during {int(r.user_txn_count_last_6)}-txn burst (fan-out)"
     ),
 }
 
 
 def _behavior_clauses(row, skip_amount_clause=False, skip_velocity_clause=False, skip_new_counterparty_clause=False):
-    """Clauses describing THIS transaction against the sender/receiver's
-    own learned history (see profile_store.py/online_features.py) -
-    included even when no named rule fired, so a flag is never explained
+    """Terse clauses describing THIS transaction against the sender/
+    receiver's own learned history (see profile_store.py/online_features.py)
+    - included even when no named rule fired, so a flag is never explained
     purely as an opaque model percentage. skip_amount_clause avoids
     restating the sender's-average comparison when a rule phrase (e.g.
     extreme_amount_vs_self/legacy_amount_cutoff) already covered it."""
@@ -96,31 +78,27 @@ def _behavior_clauses(row, skip_amount_clause=False, skip_velocity_clause=False,
     if skip_amount_clause:
         pass
     elif row.user_txn_count_so_far > 0:
-        clauses.append(
-            f"amount GHS {row.amount:,.2f} vs sender's usual GHS {row.user_amount_cummean:,.2f} "
-            f"({row.amount_zscore_vs_self:+.1f}sigma over {int(row.user_txn_count_so_far)} prior transactions)"
-        )
+        clauses.append(f"{row.amount_zscore_vs_self:+.1f}sigma vs self-avg GHS {row.user_amount_cummean:,.2f}")
     else:
-        clauses.append(f"sender's first observed transaction, amount GHS {row.amount:,.2f}")
+        clauses.append(f"first txn, amount GHS {row.amount:,.2f}")
     if row.user_txn_count_last_1 >= 3 and not skip_velocity_clause:
-        clauses.append(f"{int(row.user_txn_count_last_1)} transactions from this sender in the last hour")
+        clauses.append(f"{int(row.user_txn_count_last_1)} txns/1h")
     if row.is_new_counterparty and not skip_new_counterparty_clause:
-        clauses.append("first-ever transaction to this receiver")
+        clauses.append("new counterparty")
     if row.sender_device_changed_this_txn:
-        clauses.append("sent from a device never seen on this account before")
+        clauses.append("new device")
     if row.receiver_incoming_count_so_far >= 5 and row.receiver_fanin_ratio > 0.5:
         clauses.append(
-            f"receiver has taken money from {int(row.receiver_distinct_senders_so_far)} different senders "
-            f"across {int(row.receiver_incoming_count_so_far)} incoming transactions"
+            f"receiver fan-in: {int(row.receiver_distinct_senders_so_far)}/{int(row.receiver_incoming_count_so_far)}"
         )
     return clauses
 
 
 def _build_explanation(row, fired_names, prob):
-    """Builds the human-readable block_reason for one row: named-rule
-    phrases first (most specific), then behavioral context against the
-    sender/receiver's own history, deduped and capped so it stays
-    readable in the UI."""
+    """Builds the short, technical block_reason for one row: the single
+    most specific named-rule phrase, plus at most one behavioral clause
+    against the sender/receiver's own history - capped at 2 clauses total
+    so it stays a fragment, not a paragraph."""
     clauses = [_RULE_PHRASES[name](row) for name in fired_names if name in _RULE_PHRASES]
     amount_already_covered = "extreme_amount_vs_self" in fired_names or "legacy_amount_cutoff" in fired_names
     velocity_already_covered = (
@@ -135,8 +113,8 @@ def _build_explanation(row, fired_names, prob):
         if c not in clauses:
             clauses.append(c)
     if not fired_names:
-        clauses.insert(0, f"ensemble model estimated a {prob:.0%} fraud probability (no single rule fired)")
-    return "; ".join(clauses[:4])
+        clauses.insert(0, f"ensemble {prob:.0%} (no single rule)")
+    return "; ".join(clauses[:2])
 
 
 class CalibratedUnsupervised:

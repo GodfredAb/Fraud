@@ -18,6 +18,7 @@ Usage:
 
 import os
 import sys
+import math
 import datetime as dt
 
 from fastapi import FastAPI, HTTPException, Query
@@ -147,6 +148,55 @@ def transaction_detail(txn_id: int):
     if not rows:
         raise HTTPException(status_code=404, detail="transaction not found")
     return rows[0]
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two lat/lon points, in km."""
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    r = 6371.0
+    p1, p2 = math.radians(float(lat1)), math.radians(float(lat2))
+    dp = math.radians(float(lat2) - float(lat1))
+    dl = math.radians(float(lon2) - float(lon1))
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return round(r * 2 * math.asin(math.sqrt(a)), 1)
+
+
+@app.get("/api/fraud-locations")
+def fraud_locations(limit: int = Query(20, ge=1, le=100)):
+    """Current vs. home location for the subscribers most likely to be
+    committing fraud right now (highest fraud_probability on a flagged
+    transaction they SENT), one row per subscriber - not per alert, unlike
+    /api/alerts. users.current_*/avg_* are denormalized onto the user row
+    by a DB trigger (see schema.sql) from user_locations ping history, so
+    this is a single indexed lookup, not an aggregation over raw pings.
+    distance_km is how far their current position is from where they
+    normally are - a subscriber transacting from 40km away from their own
+    home range is a meaningfully different risk picture than one two
+    blocks from home, on top of whatever the transaction itself scored."""
+    rows = query("""
+        SELECT u.user_id, u.full_name, u.msisdn, u.kyc_status,
+               u.current_latitude, u.current_longitude, u.current_location_at,
+               u.avg_latitude, u.avg_longitude,
+               f.max_fraud_probability, f.last_flagged_at, f.flagged_count
+        FROM users u
+        JOIN (
+            SELECT sender_user_id,
+                   MAX(fraud_probability) AS max_fraud_probability,
+                   MAX(scored_at) AS last_flagged_at,
+                   COUNT(*) AS flagged_count
+            FROM transactions
+            WHERE flagged = TRUE
+            GROUP BY sender_user_id
+        ) f ON f.sender_user_id = u.user_id
+        ORDER BY f.max_fraud_probability DESC
+        LIMIT %s
+    """, (limit,))
+    for r in rows:
+        r["distance_from_home_km"] = _haversine_km(
+            r["current_latitude"], r["current_longitude"], r["avg_latitude"], r["avg_longitude"]
+        )
+    return rows
 
 
 @app.get("/api/suspended")

@@ -6,6 +6,7 @@ import { AlertsTable } from "./components/AlertsTable";
 import { RecentActivity } from "./components/RecentActivity";
 import { SuspendedAccounts } from "./components/SuspendedAccounts";
 import { TransactionDetail } from "./components/TransactionDetail";
+import { FraudLocations } from "./components/FraudLocations";
 import { relativeTime } from "./format";
 import "./App.css";
 
@@ -16,6 +17,7 @@ function App() {
   const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS);
   const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS);
   const { data: suspended } = usePolling(api.suspended, POLL_MS);
+  const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS);
   const [selectedTxnId, setSelectedTxnId] = useState(null);
 
   const blockThreshold = stats?.block_threshold ?? 0.8;
@@ -111,6 +113,14 @@ function App() {
           <SuspendedAccounts accounts={suspended} />
         </section>
       </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Fraud subscriber locations</h2>
+          <span className="muted">ranked by fraud probability - current vs. home location</span>
+        </div>
+        <FraudLocations rows={fraudLocations} />
+      </section>
 
       {selectedTxnId != null && (
         <TransactionDetail txnId={selectedTxnId} onClose={() => setSelectedTxnId(null)} />
