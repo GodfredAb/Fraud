@@ -20,8 +20,8 @@ import datetime as dt
 
 def write_alerts(conn, scored_df, model_version: str):
     """scored_df: DataFrame with columns txn_id, fraud_probability, flagged,
-    blocked, block_reason (one row per transaction just scored, any order).
-    Returns (n_transactions_updated, n_alerts_inserted)."""
+    blocked, block_reason, scoring_duration_ms (one row per transaction
+    just scored, any order). Returns (n_transactions_updated, n_alerts_inserted)."""
     from psycopg2.extras import execute_values
 
     if scored_df.empty:
@@ -30,7 +30,8 @@ def write_alerts(conn, scored_df, model_version: str):
     now = dt.datetime.now()
     update_rows = [
         (int(r.txn_id), float(r.fraud_probability), bool(r.flagged),
-         bool(r.blocked), (r.block_reason or None), model_version, now)
+         bool(r.blocked), (r.block_reason or None), model_version, now,
+         float(r.scoring_duration_ms))
         for r in scored_df.itertuples()
     ]
 
@@ -42,11 +43,12 @@ def write_alerts(conn, scored_df, model_version: str):
                 blocked             = v.blocked,
                 block_reason         = v.block_reason,
                 model_version         = v.model_version,
-                scored_at              = v.scored_at
-            FROM (VALUES %s) AS v(txn_id, fraud_probability, flagged, blocked, block_reason, model_version, scored_at)
+                scored_at              = v.scored_at,
+                scoring_duration_ms     = v.scoring_duration_ms
+            FROM (VALUES %s) AS v(txn_id, fraud_probability, flagged, blocked, block_reason, model_version, scored_at, scoring_duration_ms)
             WHERE t.txn_id = v.txn_id
         """, update_rows,
-            template="(%s::bigint, %s::numeric, %s::boolean, %s::boolean, %s::varchar, %s::varchar, %s::timestamp)")
+            template="(%s::bigint, %s::numeric, %s::boolean, %s::boolean, %s::varchar, %s::varchar, %s::timestamp, %s::double precision)")
         # Note: NOT cur.rowcount here - execute_values pages large batches
         # into multiple UPDATE statements (default page_size=100), and
         # rowcount only reflects the last page executed, not the total.

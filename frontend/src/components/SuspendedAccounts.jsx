@@ -12,16 +12,20 @@ export function SuspendedAccounts({ accounts }) {
     <ul className="suspended-list">
       {accounts.map((u) => (
         <li key={u.user_id} className="suspended-item">
-          <span className="status-dot status-dot-critical" aria-hidden="true" />
-          <div className="suspended-item-body">
-            <div className="suspended-item-name">
-              {u.full_name} <span className="muted mono">({u.user_id})</span>
-            </div>
+          <div>
+            <div className="suspended-item-name">{u.full_name || u.user_id}</div>
             <div className="muted">
-              suspended {relativeTime(u.updated_at)} · {u.blocked_txn_count} blocked txn
+              Suspended {relativeTime(u.updated_at)} · {u.blocked_txn_count} blocked txn
               {u.blocked_txn_count === 1 ? "" : "s"}
             </div>
           </div>
+          <span
+            className="icon-button icon-button-static"
+            title={`${u.full_name} (${u.user_id}) - user detail view not available in this demo`}
+            aria-hidden="true"
+          >
+            👁
+          </span>
         </li>
       ))}
     </ul>

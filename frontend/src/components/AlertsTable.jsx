@@ -1,5 +1,13 @@
 import { ProbabilityPill } from "./ProbabilityPill";
-import { relativeTime, money } from "../format";
+import { classifyReason } from "../format";
+
+const STATUS_MAP = {
+  auto_blocked: { label: "Flagged", tone: "critical", icon: "⛔" },
+  confirmed_fraud: { label: "Flagged", tone: "critical", icon: "⛔" },
+  open: { label: "Pending", tone: "warning", icon: "◔" },
+  under_review: { label: "Pending", tone: "warning", icon: "◔" },
+  false_positive: { label: "Cleared", tone: "good", icon: "✓" },
+};
 
 export function AlertsTable({ alerts, blockThreshold, alertThreshold, onSelect }) {
   if (!alerts) {
@@ -14,45 +22,36 @@ export function AlertsTable({ alerts, blockThreshold, alertThreshold, onSelect }
       <table className="data-table">
         <thead>
           <tr>
-            <th>When</th>
-            <th>Txn</th>
-            <th>Sender → Receiver</th>
+            <th>ID</th>
+            <th>Timestamp</th>
             <th>Type</th>
-            <th className="num">Amount</th>
-            <th>Fraud probability</th>
+            <th>Probability</th>
             <th>Status</th>
-            <th>Reason</th>
           </tr>
         </thead>
         <tbody>
-          {alerts.map((a) => (
-            <tr key={a.alert_id} className="clickable-row" onClick={() => onSelect?.(a.txn_id)}>
-              <td className="muted">{relativeTime(a.alert_created_at)}</td>
-              <td className="mono">#{a.txn_id}</td>
-              <td>
-                <span title={a.sender_msisdn}>{a.sender_name || a.sender_user_id}</span>
-                {" → "}
-                <span title={a.receiver_msisdn}>{a.receiver_name || a.receiver_user_id}</span>
-              </td>
-              <td className="muted">{a.txn_type}</td>
-              <td className="num mono">{money(a.amount)}</td>
-              <td>
-                <ProbabilityPill
-                  value={a.fraud_probability}
-                  blockThreshold={blockThreshold}
-                  alertThreshold={alertThreshold}
-                />
-              </td>
-              <td>
-                <span className={`status-chip status-chip-${a.alert_status}`}>
-                  {a.alert_status.replace("_", " ")}
-                </span>
-              </td>
-              <td className="muted reason-cell" title={a.block_reason || ""}>
-                {a.block_reason || "—"}
-              </td>
-            </tr>
-          ))}
+          {alerts.map((a) => {
+            const status = STATUS_MAP[a.alert_status] || { label: a.alert_status, tone: "warning", icon: "◔" };
+            return (
+              <tr key={a.alert_id} className="clickable-row" onClick={() => onSelect?.(a.txn_id)}>
+                <td className="mono link-cell">TRX_{a.txn_id}</td>
+                <td className="muted">{new Date(a.alert_created_at).toLocaleTimeString()}</td>
+                <td>{classifyReason(a.block_reason)}</td>
+                <td>
+                  <ProbabilityPill
+                    value={a.fraud_probability}
+                    blockThreshold={blockThreshold}
+                    alertThreshold={alertThreshold}
+                  />
+                </td>
+                <td>
+                  <span className={`status-label status-label-${status.tone}`}>
+                    <span aria-hidden="true">{status.icon}</span> {status.label}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

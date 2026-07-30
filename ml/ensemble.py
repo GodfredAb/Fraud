@@ -20,6 +20,7 @@ compute_batch_features.
 """
 
 import os
+import time
 import json
 import numpy as np
 import pandas as pd
@@ -184,8 +185,16 @@ def score_ensemble(feat_df: pd.DataFrame, components: dict) -> pd.DataFrame:
     one-hot txn_type dummy columns (same shape train.py/score.py/monitor.py
     already build). Returns feat_df with fraud_probability/flagged/blocked/
     block_reason and each component's individual score attached (kept for
-    transparency in the alert queue / audit trail).
+    transparency in the alert queue / audit trail), plus
+    scoring_duration_ms - real wall-clock time for the model-inference +
+    rule-evaluation work below (not feature engineering, which runs before
+    this is called, and not DB I/O), amortized evenly across the batch.
+    This is what /api/stats' scoring-latency figures are built from -
+    deliberately NOT derived from transactions.created_at/scored_at, which
+    would just measure how long a transaction sat waiting for someone to
+    run monitor.py, not how fast the engine itself is.
     """
+    _t0 = time.perf_counter()
     feature_cols = components["feature_cols"]
     X = feat_df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
@@ -241,4 +250,6 @@ def score_ensemble(feat_df: pd.DataFrame, components: dict) -> pd.DataFrame:
     out["flagged"] = flagged.astype(int)
     out["blocked"] = blocked
     out["block_reason"] = block_reason
+    elapsed_ms = (time.perf_counter() - _t0) * 1000
+    out["scoring_duration_ms"] = elapsed_ms / max(len(out), 1)
     return out

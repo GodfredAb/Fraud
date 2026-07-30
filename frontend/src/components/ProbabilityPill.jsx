@@ -1,25 +1,21 @@
 /**
- * Fraud probability rendered as a status pill - color is never the only
- * signal (warning/serious dip below 3:1 contrast on a light surface by
- * design in the palette), so the numeric value and a text label always
- * ship alongside the color.
+ * Fraud probability rendered as a tinted pill - color is never the only
+ * signal (see the dataviz skill's status-palette note on light-surface
+ * contrast), so the numeric value always ships alongside the color, and
+ * the tint (not just the number) carries the severity at a glance.
  */
 export function ProbabilityPill({ value, blockThreshold, alertThreshold }) {
   const pct = Math.round(value * 100);
   let tone = "good";
-  let label = "low";
   if (value >= blockThreshold) {
     tone = "critical";
-    label = "blocked";
   } else if (value >= alertThreshold) {
     tone = "warning";
-    label = "flagged";
   }
 
   return (
-    <span className={`pill pill-${tone}`} title={`fraud_probability = ${value.toFixed(3)}`}>
-      <span className="pill-dot" />
-      {pct}% <span className="pill-label">{label}</span>
+    <span className={`prob-pill prob-pill-${tone}`} title={`fraud_probability = ${value.toFixed(3)}`}>
+      {(value).toFixed(2)}
     </span>
   );
 }

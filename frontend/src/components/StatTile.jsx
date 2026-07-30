@@ -1,9 +1,12 @@
-export function StatTile({ label, value, tone = "neutral", sublabel }) {
+export function StatTile({ label, value, tone = "neutral", sublabel, icon }) {
   return (
-    <div className={`stat-tile stat-tile-${tone}`}>
-      <div className="stat-tile-label">{label}</div>
-      <div className="stat-tile-value">{value}</div>
-      {sublabel && <div className="stat-tile-sublabel">{sublabel}</div>}
+    <div className="stat-card">
+      <div className="stat-card-top">
+        <span className="stat-card-label">{label}</span>
+        {icon && <span className={`stat-card-icon stat-card-icon-${tone}`} aria-hidden="true">{icon}</span>}
+      </div>
+      <div className="stat-card-value">{value}</div>
+      {sublabel && <div className={`stat-card-sublabel stat-card-sublabel-${tone}`}>{sublabel}</div>}
     </div>
   );
 }

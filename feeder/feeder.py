@@ -96,8 +96,17 @@ def swap_device(conn, user_id, rng):
     new device (new random IMEI). Returns the new IMEI. This is what gives
     ml/rules.py's device_change_then_large_txn rule something real to
     catch - without an actual change event, sender_imei never differs
-    from a user's stored profile and the rule can never fire."""
-    new_imei = "".join(str(rng.randint(0, 9)) for _ in range(15))
+    from a user's stored profile and the rule can never fire.
+
+    Retries on an IMEI collision (devices.imei is UNIQUE): re-running this
+    demo with the same or overlapping --seed values across separate
+    processes can land the shared rng on the same 15-digit sequence twice
+    - a real, observed collision, not a one-in-10^15 fluke, since it's
+    deterministic reuse of the same RNG stream rather than independent
+    randomness. An uncaught UniqueViolation previously killed the whole
+    feeder run before it inserted anything."""
+    import psycopg2
+
     with conn.cursor() as cur:
         cur.execute("""
             SELECT l.subscriber_id FROM subscriber_device_links l
@@ -109,21 +118,28 @@ def swap_device(conn, user_id, rng):
             return None
         subscriber_id = row[0]
 
-        cur.execute("""
-            UPDATE subscriber_device_links SET is_current = FALSE, last_seen_at = now()
-            WHERE subscriber_id = %s AND is_current = TRUE
-        """, (subscriber_id,))
-        cur.execute("""
-            INSERT INTO devices (imei, manufacturer, model)
-            VALUES (%s, 'Unknown', 'Unknown') RETURNING device_id
-        """, (new_imei,))
-        device_id = cur.fetchone()[0]
-        cur.execute("""
-            INSERT INTO subscriber_device_links (subscriber_id, device_id, is_current)
-            VALUES (%s, %s, TRUE)
-        """, (subscriber_id, device_id))
-    conn.commit()
-    return new_imei
+    for _attempt in range(5):
+        new_imei = "".join(str(rng.randint(0, 9)) for _ in range(15))
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE subscriber_device_links SET is_current = FALSE, last_seen_at = now()
+                    WHERE subscriber_id = %s AND is_current = TRUE
+                """, (subscriber_id,))
+                cur.execute("""
+                    INSERT INTO devices (imei, manufacturer, model)
+                    VALUES (%s, 'Unknown', 'Unknown') RETURNING device_id
+                """, (new_imei,))
+                device_id = cur.fetchone()[0]
+                cur.execute("""
+                    INSERT INTO subscriber_device_links (subscriber_id, device_id, is_current)
+                    VALUES (%s, %s, TRUE)
+                """, (subscriber_id, device_id))
+            conn.commit()
+            return new_imei
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+    return None
 
 
 def fetch_most_dormant_sender(conn, eligible_senders):

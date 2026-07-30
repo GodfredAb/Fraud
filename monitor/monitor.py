@@ -103,7 +103,9 @@ def score_cycle(conn, components):
     upsert_profiles(conn, profiles)
     insert_new_pairs(conn, new_pairs)
     n_updated, n_alerts = write_alerts(
-        conn, scored_df[["txn_id", "fraud_probability", "flagged", "blocked", "block_reason"]], config.MODEL_VERSION
+        conn,
+        scored_df[["txn_id", "fraud_probability", "flagged", "blocked", "block_reason", "scoring_duration_ms"]],
+        config.MODEL_VERSION,
     )
 
     # --- Prevention: freeze any sender whose transaction just got hard-

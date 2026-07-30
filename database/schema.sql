@@ -203,6 +203,12 @@ CREATE TABLE transactions (
     block_reason           TEXT,
     model_version         VARCHAR(50),
     scored_at             TIMESTAMP,
+    -- Real engine processing time (ml/ensemble.py:score_ensemble), NOT
+    -- derived from scored_at - created_at (that would measure how long a
+    -- transaction sat waiting for someone to run monitor.py, not how fast
+    -- the model/rule evaluation actually is). Powers /api/stats' scoring
+    -- latency figures.
+    scoring_duration_ms   DOUBLE PRECISION,
 
     created_at            TIMESTAMP     NOT NULL DEFAULT now()
 );

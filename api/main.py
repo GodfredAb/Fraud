@@ -24,11 +24,14 @@ import datetime as dt
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for _p in (_ROOT, _HERE):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import config
+from geocode import resolve_address
 
 try:
     import psycopg2
@@ -76,7 +79,16 @@ def health():
 @app.get("/api/stats")
 def stats():
     """One summary row: everything the dashboard's stat tiles need in a
-    single round trip."""
+    single round trip. system_health_pct/scoring latency/fraud_volume_24h
+    are all real, computed metrics (not display placeholders): health is
+    how caught-up scoring is (scored/total), latency comes from
+    transactions.scoring_duration_ms - real engine processing time
+    recorded by ml/ensemble.py:score_ensemble at the moment each
+    transaction was scored, NOT scored_at - created_at (that would just
+    measure how long a transaction sat waiting for someone to run
+    monitor.py, not how fast the model/rule evaluation actually is) -
+    over the most recently scored 500 rows so it reflects current
+    throughput, not all-time history."""
     row = query("""
         SELECT
             (SELECT count(*) FROM transactions)                                  AS total_transactions,
@@ -88,10 +100,22 @@ def stats():
             (SELECT count(*) FROM users WHERE kyc_status = 'suspended')          AS suspended_accounts,
             (SELECT count(*) FROM users)                                        AS total_accounts,
             (SELECT max(scored_at) FROM transactions)                           AS last_scored_at,
-            (SELECT avg(fraud_probability) FROM transactions WHERE scored_at IS NOT NULL) AS avg_fraud_probability
+            (SELECT avg(fraud_probability) FROM transactions WHERE scored_at IS NOT NULL) AS avg_fraud_probability,
+            (SELECT COALESCE(SUM(amount), 0) FROM transactions
+              WHERE flagged AND scored_at >= now() - interval '24 hours')       AS fraud_volume_24h,
+            (SELECT avg(scoring_duration_ms) FROM (
+                SELECT scoring_duration_ms FROM transactions
+                WHERE scoring_duration_ms IS NOT NULL ORDER BY scored_at DESC LIMIT 500
+            ) recent)                                                            AS avg_scoring_latency_ms,
+            (SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY scoring_duration_ms) FROM (
+                SELECT scoring_duration_ms FROM transactions
+                WHERE scoring_duration_ms IS NOT NULL ORDER BY scored_at DESC LIMIT 500
+            ) recent)                                                            AS p95_scoring_latency_ms
     """)[0]
     row["alert_threshold"] = config.ALERT_THRESHOLD
     row["block_threshold"] = config.BLOCK_THRESHOLD
+    total = row["total_transactions"] or 0
+    row["system_health_pct"] = round((row["scored_transactions"] / total) * 100, 1) if total else 100.0
     return row
 
 
@@ -178,24 +202,26 @@ def fraud_locations(limit: int = Query(20, ge=1, le=100)):
         SELECT u.user_id, u.full_name, u.msisdn, u.kyc_status,
                u.current_latitude, u.current_longitude, u.current_location_at,
                u.avg_latitude, u.avg_longitude,
-               f.max_fraud_probability, f.last_flagged_at, f.flagged_count
+               f.txn_id AS top_txn_id, f.fraud_probability AS max_fraud_probability,
+               f.scored_at AS last_flagged_at, f.flagged_count
         FROM users u
         JOIN (
-            SELECT sender_user_id,
-                   MAX(fraud_probability) AS max_fraud_probability,
-                   MAX(scored_at) AS last_flagged_at,
-                   COUNT(*) AS flagged_count
+            SELECT DISTINCT ON (sender_user_id)
+                   sender_user_id, txn_id, fraud_probability, scored_at,
+                   COUNT(*) OVER (PARTITION BY sender_user_id) AS flagged_count
             FROM transactions
             WHERE flagged = TRUE
-            GROUP BY sender_user_id
+            ORDER BY sender_user_id, fraud_probability DESC, scored_at DESC
         ) f ON f.sender_user_id = u.user_id
-        ORDER BY f.max_fraud_probability DESC
+        ORDER BY f.fraud_probability DESC
         LIMIT %s
     """, (limit,))
     for r in rows:
         r["distance_from_home_km"] = _haversine_km(
             r["current_latitude"], r["current_longitude"], r["avg_latitude"], r["avg_longitude"]
         )
+        r["current_address"] = resolve_address(r["current_latitude"], r["current_longitude"])
+        r["home_address"] = resolve_address(r["avg_latitude"], r["avg_longitude"])
     return rows
 
 
