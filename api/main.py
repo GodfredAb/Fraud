@@ -36,6 +36,7 @@ from geocode import resolve_address
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
 except ImportError as e:
     print(f"Missing dependency: {e}. Install with:\n    pip install -r api/requirements.txt")
     sys.exit(1)
@@ -51,19 +52,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-def get_conn():
-    return psycopg2.connect(config.DB_DSN, cursor_factory=psycopg2.extras.RealDictCursor)
+# A fresh connection to a remote host like Neon takes >1s (TLS handshake +
+# the serverless compute waking up if it had scaled to zero) - measured
+# directly, not assumed. Opening/closing a new one on every single request
+# (the old get_conn()) made every dashboard poll pay that cost repeatedly,
+# which is what made the whole UI feel like it hung on every page.
+#
+# minconn is deliberately >1, not just maxconn: psycopg2's pool holds one
+# internal lock for the ENTIRE duration of creating a new connection,
+# including that >1s network round trip - so under concurrent load (the
+# dashboard fires ~5 endpoints at once on page load) a pool that only
+# grows lazily serializes every request behind that lock while each new
+# connection is established, one at a time (measured: a fresh page load
+# took 5.6s, with responses visibly queuing up ~1s apart). Pre-creating
+# 8 connections here means that cost is paid ONCE at process startup,
+# never during a real request.
+_pool = psycopg2.pool.ThreadedConnectionPool(
+    8, 12, config.DB_DSN, cursor_factory=psycopg2.extras.RealDictCursor
+)
 
 
 def query(sql: str, params: tuple = ()):
-    conn = get_conn()
+    conn = _pool.getconn()
     try:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
+    except psycopg2.OperationalError:
+        # The pooled connection went stale (e.g. Neon closed an idle one) -
+        # drop it from the pool rather than handing it out again, and retry
+        # once on a fresh connection.
+        _pool.putconn(conn, close=True)
+        conn = _pool.getconn()
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
     finally:
-        conn.close()
+        _pool.putconn(conn)
 
 
 @app.get("/api/health")

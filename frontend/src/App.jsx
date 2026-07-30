@@ -15,13 +15,18 @@ import "./App.css";
 const POLL_MS = 4000;
 
 function App() {
-  const { data: stats, error: statsError } = usePolling(api.stats, POLL_MS);
-  const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS);
-  const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS);
-  const { data: suspended } = usePolling(api.suspended, POLL_MS);
-  const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS);
   const [selectedTxnId, setSelectedTxnId] = useState(null);
   const [page, setPage] = useState("dashboard");
+
+  // Each panel's data only polls while a page that actually shows it is
+  // active - no point fetching fraud-locations every 4s while looking at
+  // the Map placeholder, and it was adding up: 5 endpoints x every page,
+  // all the time, was part of what made the whole app feel slow.
+  const { data: stats, error: statsError } = usePolling(api.stats, POLL_MS, [], page === "dashboard");
+  const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS, [], page === "dashboard" || page === "alerts");
+  const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS, [], page === "alerts");
+  const { data: suspended } = usePolling(api.suspended, POLL_MS, [], page === "dashboard" || page === "accounts");
+  const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS, [], page === "dashboard");
 
   const blockThreshold = stats?.block_threshold ?? 0.8;
   const alertThreshold = stats?.alert_threshold ?? 0.5;
