@@ -7,6 +7,8 @@ import { AlertsTable } from "./components/AlertsTable";
 import { RecentActivity } from "./components/RecentActivity";
 import { SuspendedAccounts } from "./components/SuspendedAccounts";
 import { FraudLocations } from "./components/FraudLocations";
+import { FraudMap } from "./components/FraudMap";
+import { Reports } from "./components/Reports";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { TransactionDetail } from "./components/TransactionDetail";
 import { shortMoney, ms } from "./format";
@@ -26,7 +28,9 @@ function App() {
   const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS, [], page === "dashboard" || page === "alerts");
   const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS, [], page === "alerts");
   const { data: suspended } = usePolling(api.suspended, POLL_MS, [], page === "dashboard" || page === "accounts");
-  const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS, [], page === "dashboard");
+  const { data: fraudLocations } = usePolling(
+    () => api.fraudLocations(20), POLL_MS, [], page === "dashboard" || page === "map"
+  );
 
   const blockThreshold = stats?.block_threshold ?? 0.8;
   const alertThreshold = stats?.alert_threshold ?? 0.5;
@@ -157,23 +161,19 @@ function App() {
       {page === "map" && (
         <section className="panel">
           <div className="panel-header">
-            <h2>Map</h2>
+            <h2>Fraud Location Map</h2>
+            <span className="muted">illustrative location resolution - synthetic data</span>
           </div>
-          <p className="muted" style={{ padding: "16px" }}>
-            Map view isn't implemented in this demo - see the Geo-Location Deltas table on the
-            Dashboard for the same data (current vs. home location per subscriber).
-          </p>
+          <FraudMap
+            rows={fraudLocations}
+            blockThreshold={blockThreshold}
+            alertThreshold={alertThreshold}
+            onSelect={setSelectedTxnId}
+          />
         </section>
       )}
 
-      {page === "reports" && (
-        <section className="panel">
-          <div className="panel-header">
-            <h2>Reports</h2>
-          </div>
-          <p className="muted" style={{ padding: "16px" }}>Reports aren't implemented in this demo.</p>
-        </section>
-      )}
+      {page === "reports" && <Reports />}
 
       {selectedTxnId != null && (
         <TransactionDetail txnId={selectedTxnId} onClose={() => setSelectedTxnId(null)} />

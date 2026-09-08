@@ -16,4 +16,5 @@ export const api = {
   transaction: (txnId) => get(`/api/transactions/${txnId}`),
   suspended: () => get("/api/suspended"),
   fraudLocations: (limit = 20) => get(`/api/fraud-locations?limit=${limit}`),
+  reports: (range = "7d") => get(`/api/reports?range=${range}`),
 };

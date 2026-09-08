@@ -60,3 +60,25 @@ export function classifyReason(blockReason) {
   }
   return "ML Anomaly Score";
 }
+
+/**
+ * Real CSV export, not a stub: builds an actual comma-separated file
+ * client-side (quoting fields that contain a comma/quote/newline) and
+ * triggers a browser download - no server round trip, no new dependency.
+ */
+export function downloadCsv(filename, rows, columns) {
+  const escape = (value) => {
+    const s = value == null ? "" : String(value);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = columns.map(([, label]) => escape(label)).join(",");
+  const lines = rows.map((row) => columns.map(([key]) => escape(row[key])).join(","));
+  const csv = [header, ...lines].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

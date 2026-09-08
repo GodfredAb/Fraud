@@ -65,30 +65,57 @@ app.add_middleware(
 # grows lazily serializes every request behind that lock while each new
 # connection is established, one at a time (measured: a fresh page load
 # took 5.6s, with responses visibly queuing up ~1s apart). Pre-creating
-# 8 connections here means that cost is paid ONCE at process startup,
-# never during a real request.
+# connections here means that cost is paid ONCE at process startup, never
+# during a real request. maxconn has headroom above the 5 endpoints a
+# single page load fires, since Map/Reports can be open in another tab
+# polling concurrently with the dashboard.
 _pool = psycopg2.pool.ThreadedConnectionPool(
-    8, 12, config.DB_DSN, cursor_factory=psycopg2.extras.RealDictCursor
+    8, 20, config.DB_DSN, cursor_factory=psycopg2.extras.RealDictCursor
 )
 
 
-def query(sql: str, params: tuple = ()):
-    conn = _pool.getconn()
+def _getconn():
     try:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return [dict(r) for r in cur.fetchall()]
-    except psycopg2.OperationalError:
-        # The pooled connection went stale (e.g. Neon closed an idle one) -
-        # drop it from the pool rather than handing it out again, and retry
-        # once on a fresh connection.
-        _pool.putconn(conn, close=True)
-        conn = _pool.getconn()
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            return [dict(r) for r in cur.fetchall()]
+        return _pool.getconn()
+    except psycopg2.pool.PoolError as e:
+        # Raising this bare would bypass CORSMiddleware entirely - an
+        # unhandled exception is caught by Starlette's
+        # ServerErrorMiddleware, which sits OUTSIDE CORSMiddleware, so the
+        # resulting 500 ships with no CORS headers at all. The browser
+        # then reports it as a CORS failure, hiding the real cause
+        # (measured directly: this is exactly what happened under
+        # concurrent polling across pages before this was caught here).
+        # Raising HTTPException instead is handled further in, so CORS
+        # headers still get attached normally.
+        raise HTTPException(status_code=503, detail=f"database pool exhausted: {e}")
+
+
+def query(sql: str, params: tuple = ()):
+    conn = _getconn()
+    returned = False
+    try:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return [dict(r) for r in cur.fetchall()]
+        except psycopg2.OperationalError:
+            # The pooled connection went stale (e.g. Neon closed an idle
+            # one) - drop it from the pool rather than handing it out
+            # again, and retry once on a fresh connection. `returned` is
+            # tracked explicitly (not inferred from reaching this line)
+            # so that if the retry's _getconn() also fails, finally below
+            # doesn't try to hand the same already-dropped connection
+            # back a second time.
+            _pool.putconn(conn, close=True)
+            returned = True
+            conn = _getconn()
+            returned = False
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return [dict(r) for r in cur.fetchall()]
     finally:
-        _pool.putconn(conn)
+        if not returned:
+            _pool.putconn(conn)
 
 
 @app.get("/api/health")
@@ -248,6 +275,50 @@ def fraud_locations(limit: int = Query(20, ge=1, le=100)):
         r["current_address"] = resolve_address(r["current_latitude"], r["current_longitude"])
         r["home_address"] = resolve_address(r["avg_latitude"], r["avg_longitude"])
     return rows
+
+
+_REPORT_CUTOFFS = {
+    "today": "date_trunc('day', now())",
+    "7d": "now() - interval '7 days'",
+    "30d": "now() - interval '30 days'",
+    "all": "'-infinity'",
+}
+
+
+@app.get("/api/reports")
+def reports(range: str = Query("7d", pattern="^(today|7d|30d|all)$")):
+    """On-demand report pull for the given window - NOT part of the
+    steady 4s poll loop (same one-shot pattern as
+    /api/transactions/{txn_id}), since a report is something an analyst
+    asks for, not a live tile. Returns the full matching alert rows
+    (not a fixed limit like /api/alerts) so the frontend can classify
+    them by rule type (format.js's classifyReason - reused rather than
+    re-implemented here, so there's exactly one place block_reason text
+    gets turned into a category) and offer a CSV export over the whole
+    window, not just the latest page.
+    range is constrained to 4 known keys by the Query pattern above, and
+    _REPORT_CUTOFFS is a fixed internal dict, not user input - the SQL
+    fragment substituted below is always one of those 4 literals."""
+    cutoff = _REPORT_CUTOFFS[range]
+    summary = query(f"""
+        SELECT
+            (SELECT count(*) FROM transactions WHERE scored_at >= {cutoff})                    AS total_scored,
+            (SELECT count(*) FROM transactions WHERE flagged AND scored_at >= {cutoff})         AS flagged_count,
+            (SELECT count(*) FROM transactions WHERE blocked AND scored_at >= {cutoff})         AS blocked_count,
+            (SELECT COALESCE(SUM(amount), 0) FROM transactions
+              WHERE blocked AND scored_at >= {cutoff})                                          AS protected_volume,
+            (SELECT avg(fraud_probability) FROM transactions WHERE scored_at >= {cutoff})       AS avg_fraud_probability,
+            (SELECT count(*) FROM users WHERE kyc_status = 'suspended')                         AS suspended_accounts
+    """)[0]
+    alerts_in_range = query(f"""
+        SELECT alert_id, alert_status, fraud_probability, txn_id, txn_timestamp, txn_type, amount,
+               blocked, block_reason, sender_user_id, sender_name, sender_msisdn,
+               receiver_user_id, receiver_name, alert_created_at
+        FROM v_alert_review_queue
+        WHERE alert_created_at >= {cutoff}
+        ORDER BY alert_created_at DESC
+    """)
+    return {"range": range, "summary": summary, "alerts": alerts_in_range}
 
 
 @app.get("/api/suspended")
