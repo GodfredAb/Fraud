@@ -146,7 +146,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dsn", default=config.DB_DSN)
     parser.add_argument("--transactions", default=os.path.join(config.BASE_DIR, "data", "synthetic.csv"))
-    parser.add_argument("--n-users", type=int, default=100)
+    parser.add_argument("--n-users", type=int, default=500)
     parser.add_argument("--n-transactions", type=int, default=2000)
     parser.add_argument("--fresh", action="store_true", help="drop and recreate all tables first")
     parser.add_argument("--seed", type=int, default=42)

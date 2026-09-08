@@ -42,10 +42,12 @@ export function FraudMap({ rows, blockThreshold, alertThreshold, onSelect }) {
     if (!layer || !rows) return;
     layer.clearLayers();
 
+    const points = [];
     for (const r of rows) {
       if (r.current_latitude == null || r.avg_latitude == null) continue;
       const current = [r.current_latitude, r.current_longitude];
       const home = [r.avg_latitude, r.avg_longitude];
+      points.push(current, home);
       const color = toneFor(r.max_fraud_probability, blockThreshold, alertThreshold);
 
       L.polyline([home, current], { color, weight: 1.5, dashArray: "4 4", opacity: 0.6 }).addTo(layer);
@@ -78,6 +80,16 @@ export function FraudMap({ rows, blockThreshold, alertThreshold, onSelect }) {
           onSelect?.(r.top_txn_id);
         });
       });
+    }
+
+    // Subscribers now span all of Ghana's regions, not just Accra, so a
+    // fixed Accra-only view would silently hide markers outside it - fit
+    // to whatever's actually plotted instead, falling back to the old
+    // Accra view when there's nothing to show yet.
+    if (points.length > 0) {
+      mapRef.current.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 12 });
+    } else {
+      mapRef.current.setView(ACCRA_CENTER, 11);
     }
   }, [rows, blockThreshold, alertThreshold, onSelect]);
 

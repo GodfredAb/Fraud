@@ -41,8 +41,23 @@ DEVICE_MODELS = {
     "Nokia": ["C21", "G22"],
 }
 
-# Accra, Ghana as the center of gravity for synthetic location pings.
-CENTER_LAT, CENTER_LON = 5.6037, -0.1870
+# Ten of Ghana's real regions/regional capitals, weighted toward Greater
+# Accra and Ashanti (the two largest population centers) - each synthetic
+# subscriber is assigned ONE of these as their home region and jittered
+# within it, so the population (and the Map/Geo-Location Deltas views)
+# spans the whole country instead of clustering entirely in Accra.
+GHANA_REGIONS = [
+    {"region": "Greater Accra", "city": "Accra", "lat": 5.6037, "lon": -0.1870, "weight": 30},
+    {"region": "Ashanti", "city": "Kumasi", "lat": 6.6885, "lon": -1.6244, "weight": 20},
+    {"region": "Western", "city": "Sekondi-Takoradi", "lat": 4.9047, "lon": -1.7124, "weight": 8},
+    {"region": "Central", "city": "Cape Coast", "lat": 5.1053, "lon": -1.2466, "weight": 7},
+    {"region": "Eastern", "city": "Koforidua", "lat": 6.0940, "lon": -0.2591, "weight": 8},
+    {"region": "Volta", "city": "Ho", "lat": 6.6018, "lon": 0.4713, "weight": 6},
+    {"region": "Northern", "city": "Tamale", "lat": 9.4035, "lon": -0.8393, "weight": 8},
+    {"region": "Upper East", "city": "Bolgatanga", "lat": 10.7856, "lon": -0.8514, "weight": 4},
+    {"region": "Upper West", "city": "Wa", "lat": 10.0601, "lon": -2.5099, "weight": 3},
+    {"region": "Bono", "city": "Sunyani", "lat": 7.3399, "lon": -2.3268, "weight": 6},
+]
 
 TXN_TYPES = ["CASH_IN", "CASH_OUT", "PAYMENT", "TRANSFER", "DEBIT"]
 TXN_TYPE_WEIGHTS = [0.25, 0.25, 0.30, 0.15, 0.05]
@@ -114,16 +129,22 @@ def generate_devices_and_subscribers(users, seed: int = 42):
 
 
 def generate_locations(users, seed: int = 42, pings_per_user: int = 8):
-    """Location ping history, jittered around Accra, chronologically
-    increasing so the DB trigger's rolling current/average stay meaningful."""
+    """Location ping history, chronologically increasing so the DB
+    trigger's rolling current/average stay meaningful. Each user is
+    assigned ONE home region (GHANA_REGIONS, weighted toward Greater
+    Accra/Ashanti) and jittered within just that region (+-0.08deg,
+    ~9km - comfortably inside a single region: the closest pair of
+    region centers here, Central/Western, are ~52km apart) plus small
+    per-ping noise, so "average location" is a stable per-user signal
+    that spans the whole country rather than clustering in one city."""
     rng = random.Random(seed + 2)
     now = dt.datetime.now()
+    weights = [r["weight"] for r in GHANA_REGIONS]
     locations = []
     for u in users:
-        # Each user has their own small home-range jitter, plus per-ping noise,
-        # so "average location" is a stable, meaningful per-user signal.
-        home_lat = CENTER_LAT + rng.uniform(-0.15, 0.15)
-        home_lon = CENTER_LON + rng.uniform(-0.15, 0.15)
+        home_region = rng.choices(GHANA_REGIONS, weights=weights, k=1)[0]
+        home_lat = home_region["lat"] + rng.uniform(-0.08, 0.08)
+        home_lon = home_region["lon"] + rng.uniform(-0.08, 0.08)
         for p in range(pings_per_user):
             recorded_at = now - dt.timedelta(days=(pings_per_user - p) * rng.uniform(2, 6))
             locations.append({

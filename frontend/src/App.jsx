@@ -28,9 +28,12 @@ function App() {
   const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS, [], page === "dashboard" || page === "alerts");
   const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS, [], page === "alerts");
   const { data: suspended } = usePolling(api.suspended, POLL_MS, [], page === "dashboard" || page === "accounts");
-  const { data: fraudLocations } = usePolling(
-    () => api.fraudLocations(20), POLL_MS, [], page === "dashboard" || page === "map"
-  );
+  const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS, [], page === "dashboard");
+  // Map view pulls a wider slice than the dashboard's top-20-worst-ever
+  // panel - with users now spread across 10 regions, the worst-ever list
+  // is dominated by a handful of long-history accounts in Accra, so the
+  // map needs more rows to actually show the regional spread on it.
+  const { data: mapLocations } = usePolling(() => api.fraudLocations(100), POLL_MS, [], page === "map");
 
   const blockThreshold = stats?.block_threshold ?? 0.8;
   const alertThreshold = stats?.alert_threshold ?? 0.5;
@@ -165,7 +168,7 @@ function App() {
             <span className="muted">illustrative location resolution - synthetic data</span>
           </div>
           <FraudMap
-            rows={fraudLocations}
+            rows={mapLocations}
             blockThreshold={blockThreshold}
             alertThreshold={alertThreshold}
             onSelect={setSelectedTxnId}

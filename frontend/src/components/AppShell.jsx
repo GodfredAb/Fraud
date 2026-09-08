@@ -56,7 +56,7 @@ export function AppShell({ page, onNavigate, children }) {
             ))}
           </nav>
 
-          <button className="sidebar-new-report" title="Not wired up in this demo">
+          <button className="sidebar-new-report" onClick={() => onNavigate("reports")}>
             + New Report
           </button>
 
