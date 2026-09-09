@@ -19,10 +19,15 @@ Usage:
 import os
 import sys
 import math
+import time
+import hmac
+import hashlib
+import secrets
 import datetime as dt
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -48,7 +53,7 @@ app = FastAPI(title="Mobile Money Fraud Detection API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -90,32 +95,30 @@ def _getconn():
         raise HTTPException(status_code=503, detail=f"database pool exhausted: {e}")
 
 
-def query(sql: str, params: tuple = ()):
-    conn = _getconn()
-    returned = False
-    try:
+def query(sql: str, params: tuple = (), _max_attempts: int = 3):
+    # The pooled connection can go stale (Neon closes idle ones, sometimes
+    # several in the pool at once during a compute-recycle event - observed
+    # directly: two consecutive pooled connections both raised "SSL
+    # connection has been closed unexpectedly" back to back) - loop a few
+    # times, dropping each dead connection from the pool rather than
+    # handing it out again, instead of assuming at most one is ever stale.
+    last_error = None
+    for _attempt in range(_max_attempts):
+        conn = _getconn()
+        returned = False
         try:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 return [dict(r) for r in cur.fetchall()]
-        except psycopg2.OperationalError:
-            # The pooled connection went stale (e.g. Neon closed an idle
-            # one) - drop it from the pool rather than handing it out
-            # again, and retry once on a fresh connection. `returned` is
-            # tracked explicitly (not inferred from reaching this line)
-            # so that if the retry's _getconn() also fails, finally below
-            # doesn't try to hand the same already-dropped connection
-            # back a second time.
+        except psycopg2.OperationalError as e:
+            last_error = e
             _pool.putconn(conn, close=True)
             returned = True
-            conn = _getconn()
-            returned = False
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
-                return [dict(r) for r in cur.fetchall()]
-    finally:
-        if not returned:
-            _pool.putconn(conn)
+            continue
+        finally:
+            if not returned:
+                _pool.putconn(conn)
+    raise HTTPException(status_code=503, detail=f"database connection kept failing: {last_error}")
 
 
 @app.get("/api/health")
@@ -128,8 +131,66 @@ def health():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Auth - a real, enforced gate in front of every data endpoint below, not a
+# frontend-only decoration. Sessions are held in-process (secrets.token_urlsafe
+# tokens, not JWTs - nothing here needs to survive an API restart or be
+# verified by a second service), which is the right amount of machinery for
+# a single-process demo API; a multi-instance production deployment would
+# swap this dict for a real session store without touching require_auth's
+# call sites below.
+# ---------------------------------------------------------------------------
+_SESSIONS: dict[str, dict] = {}
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def _hash_password(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def require_auth(authorization: str | None = Header(None)) -> str:
+    """FastAPI dependency - every protected route takes
+    `analyst: str = Depends(require_auth)`. Missing, malformed, unknown, or
+    expired tokens all get a real 401, checked with hmac.compare_digest
+    against the stored hash at login time (not here - here we're just
+    validating an opaque session token) to avoid a timing side-channel."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization[len("Bearer "):]
+    session = _SESSIONS.get(token)
+    if not session or session["expires_at"] < time.time():
+        _SESSIONS.pop(token, None)
+        raise HTTPException(status_code=401, detail="session expired or invalid - please log in again")
+    return session["analyst"]
+
+
+@app.post("/api/login")
+def login(body: LoginRequest):
+    expected_hash = config.ANALYST_CREDENTIALS.get(body.username)
+    if not expected_hash or not hmac.compare_digest(expected_hash, _hash_password(body.password)):
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = secrets.token_urlsafe(32)
+    _SESSIONS[token] = {"analyst": body.username, "expires_at": time.time() + config.SESSION_TTL_HOURS * 3600}
+    return {"token": token, "analyst_name": body.username, "expires_in_hours": config.SESSION_TTL_HOURS}
+
+
+@app.post("/api/logout")
+def logout(authorization: str = Header(...), _analyst: str = Depends(require_auth)):
+    _SESSIONS.pop(authorization[len("Bearer "):], None)
+    return {"status": "logged out"}
+
+
+@app.get("/api/me")
+def me(analyst: str = Depends(require_auth)):
+    return {"analyst_name": analyst}
+
+
 @app.get("/api/stats")
-def stats():
+def stats(_analyst: str = Depends(require_auth)):
     """One summary row: everything the dashboard's stat tiles need in a
     single round trip. system_health_pct/scoring latency/fraud_volume_24h
     are all real, computed metrics (not display placeholders): health is
@@ -175,7 +236,7 @@ def stats():
 
 
 @app.get("/api/alerts")
-def alerts(limit: int = Query(25, ge=1, le=200), status: str | None = None):
+def alerts(limit: int = Query(25, ge=1, le=200), status: str | None = None, _analyst: str = Depends(require_auth)):
     """Recent rows from v_alert_review_queue - the same view the SQL
     snippets in README.md point analysts at - newest first."""
     if status:
@@ -188,7 +249,7 @@ def alerts(limit: int = Query(25, ge=1, le=200), status: str | None = None):
 
 
 @app.get("/api/transactions/recent")
-def recent_transactions(limit: int = Query(25, ge=1, le=200)):
+def recent_transactions(limit: int = Query(25, ge=1, le=200), _analyst: str = Depends(require_auth)):
     """The live feed: most recently SCORED transactions (not just flagged
     ones), so the dashboard shows monitor.py's throughput, not only the
     fraud cases."""
@@ -204,7 +265,7 @@ def recent_transactions(limit: int = Query(25, ge=1, le=200)):
 
 
 @app.get("/api/transactions/{txn_id}")
-def transaction_detail(txn_id: int):
+def transaction_detail(txn_id: int, _analyst: str = Depends(require_auth)):
     """Full detail for one transaction, for the dashboard's row-click
     drill-down - everything recent_transactions/alerts trims out (balances,
     device IMEIs, sender/receiver names) plus flagged/blocked reason and
@@ -242,7 +303,7 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 @app.get("/api/fraud-locations")
-def fraud_locations(limit: int = Query(20, ge=1, le=100)):
+def fraud_locations(limit: int = Query(20, ge=1, le=100), _analyst: str = Depends(require_auth)):
     """Current vs. home location for the subscribers most likely to be
     committing fraud right now (highest fraud_probability on a flagged
     transaction they SENT), one row per subscriber - not per alert, unlike
@@ -289,7 +350,7 @@ _REPORT_CUTOFFS = {
 
 
 @app.get("/api/reports")
-def reports(range: str = Query("7d", pattern="^(today|7d|30d|all)$")):
+def reports(range: str = Query("7d", pattern="^(today|7d|30d|all)$"), _analyst: str = Depends(require_auth)):
     """On-demand report pull for the given window - NOT part of the
     steady 4s poll loop (same one-shot pattern as
     /api/transactions/{txn_id}), since a report is something an analyst
@@ -325,7 +386,7 @@ def reports(range: str = Query("7d", pattern="^(today|7d|30d|all)$")):
 
 
 @app.get("/api/suspended")
-def suspended_accounts():
+def suspended_accounts(_analyst: str = Depends(require_auth)):
     """Accounts monitor.py has frozen via write_alerts_to_db.suspend_users,
     plus how many blocked transactions triggered each one."""
     return query("""
@@ -337,3 +398,153 @@ def suspended_accounts():
         GROUP BY u.user_id, u.full_name, u.msisdn, u.updated_at
         ORDER BY u.updated_at DESC
     """)
+
+
+@app.get("/api/subscribers")
+def subscribers(
+    q: str = Query("", max_length=100),
+    limit: int = Query(30, ge=1, le=200),
+    _analyst: str = Depends(require_auth),
+):
+    """Directory search across the full subscriber base, by user_id, full
+    name, or MSISDN - empty q returns the most recently registered
+    subscribers instead of an empty page."""
+    if q:
+        like = f"%{q}%"
+        rows = query("""
+            SELECT user_id, full_name, msisdn, kyc_status, registration_date,
+                   avg_latitude, avg_longitude
+            FROM users
+            WHERE user_id ILIKE %s OR full_name ILIKE %s OR msisdn ILIKE %s
+            ORDER BY full_name
+            LIMIT %s
+        """, (like, like, like, limit))
+    else:
+        rows = query("""
+            SELECT user_id, full_name, msisdn, kyc_status, registration_date,
+                   avg_latitude, avg_longitude
+            FROM users
+            ORDER BY registration_date DESC
+            LIMIT %s
+        """, (limit,))
+    for r in rows:
+        addr = resolve_address(r.pop("avg_latitude", None), r.pop("avg_longitude", None))
+        r["home_city"] = addr["city"] if addr else None
+        r["home_region"] = addr["region"] if addr else None
+    return rows
+
+
+@app.get("/api/subscribers/{user_id}")
+def subscriber_detail(user_id: str, _analyst: str = Depends(require_auth)):
+    """Full subscriber profile: identity + KYC, current/home location
+    (resolved to a synthetic address, same as /api/fraud-locations),
+    behavioral baseline from user_profiles (what monitor.py's incremental
+    scoring reads instead of rescanning history), current device, and a
+    recent transaction history - everything an analyst reviewing one
+    subscriber would need, in one call."""
+    rows = query("""
+        SELECT u.user_id, u.full_name, u.national_id, u.date_of_birth, u.gender,
+               u.msisdn, u.kyc_status, u.registration_date, u.updated_at,
+               u.current_latitude, u.current_longitude, u.current_location_at,
+               u.avg_latitude, u.avg_longitude,
+               p.sender_txn_count, p.sender_amount_mean, p.sender_amount_max,
+               p.sender_distinct_receivers, p.receiver_incoming_count,
+               p.receiver_distinct_senders, p.sender_last_imei
+        FROM users u
+        LEFT JOIN user_profiles p ON p.user_id = u.user_id
+        WHERE u.user_id = %s
+    """, (user_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="subscriber not found")
+    user = rows[0]
+    user["current_address"] = resolve_address(user["current_latitude"], user["current_longitude"])
+    user["home_address"] = resolve_address(user["avg_latitude"], user["avg_longitude"])
+
+    devices = query("""
+        SELECT d.imei, d.manufacturer, d.model
+        FROM subscriber_device_links l
+        JOIN subscribers s ON s.subscriber_id = l.subscriber_id
+        JOIN devices d ON d.device_id = l.device_id
+        WHERE s.user_id = %s AND l.is_current
+        LIMIT 1
+    """, (user_id,))
+    user["device"] = devices[0] if devices else None
+
+    user["recent_transactions"] = query("""
+        SELECT txn_id, txn_timestamp, txn_type, amount, sender_user_id, receiver_user_id,
+               fraud_probability, flagged, blocked, auto_approved, scored_at
+        FROM transactions
+        WHERE sender_user_id = %s OR receiver_user_id = %s
+        ORDER BY scored_at DESC NULLS LAST, txn_id DESC
+        LIMIT 15
+    """, (user_id, user_id))
+    return user
+
+
+@app.get("/api/search")
+def global_search(q: str = Query(..., min_length=1, max_length=100), _analyst: str = Depends(require_auth)):
+    """Backs the topbar quick-search box: a small preview of matching
+    transactions (exact txn_id if q is numeric, or sender/receiver user_id
+    match) and subscribers (user_id/name/MSISDN) - a dropdown preview, not
+    the full result set (/api/subscribers handles that page)."""
+    like = f"%{q}%"
+    txns = []
+    if q.strip().isdigit():
+        txns += query("""
+            SELECT txn_id, txn_type, amount, sender_user_id, receiver_user_id,
+                   fraud_probability, flagged, blocked, scored_at
+            FROM transactions WHERE txn_id = %s
+        """, (int(q.strip()),))
+    txns += query("""
+        SELECT txn_id, txn_type, amount, sender_user_id, receiver_user_id,
+               fraud_probability, flagged, blocked, scored_at
+        FROM transactions
+        WHERE sender_user_id ILIKE %s OR receiver_user_id ILIKE %s
+        ORDER BY scored_at DESC NULLS LAST
+        LIMIT 6
+    """, (like, like))
+    seen, deduped = set(), []
+    for t in txns:
+        if t["txn_id"] not in seen:
+            seen.add(t["txn_id"])
+            deduped.append(t)
+
+    subs = query("""
+        SELECT user_id, full_name, msisdn, kyc_status
+        FROM users
+        WHERE user_id ILIKE %s OR full_name ILIKE %s OR msisdn ILIKE %s
+        ORDER BY full_name
+        LIMIT 6
+    """, (like, like, like))
+    return {"transactions": deduped[:8], "subscribers": subs}
+
+
+@app.get("/api/config")
+def system_config(_analyst: str = Depends(require_auth)):
+    """Real, live system configuration for the Settings panel - straight
+    from config.py, not placeholder text. What you see here is what's
+    actually driving scoring right now."""
+    return {
+        "alert_threshold": config.ALERT_THRESHOLD,
+        "block_threshold": config.BLOCK_THRESHOLD,
+        "ensemble_weights": config.ENSEMBLE_WEIGHTS,
+        "feeder_batch_size": config.FEEDER_BATCH_SIZE,
+        "feeder_interval_seconds": config.FEEDER_INTERVAL_SECONDS,
+        "feeder_fraud_injection_rate": config.FEEDER_FRAUD_INJECTION_RATE,
+        "monitor_poll_interval_seconds": config.MONITOR_POLL_INTERVAL_SECONDS,
+        "session_ttl_hours": config.SESSION_TTL_HOURS,
+    }
+
+
+@app.get("/api/system-log")
+def system_log(limit: int = Query(50, ge=1, le=200), _analyst: str = Depends(require_auth)):
+    """A real audit trail - the most recently scored transactions, in the
+    order the pipeline actually decided them - not a placeholder page."""
+    return query("""
+        SELECT txn_id, scored_at, txn_type, amount, sender_user_id, receiver_user_id,
+               fraud_probability, flagged, blocked, auto_approved, block_reason, model_version
+        FROM transactions
+        WHERE scored_at IS NOT NULL
+        ORDER BY scored_at DESC
+        LIMIT %s
+    """, (limit,))

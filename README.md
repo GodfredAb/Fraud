@@ -322,12 +322,31 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**. The stat tiles, alert queue, and live
-scoring feed poll every 4 seconds; the model comparison panel polls every
-60 seconds (it only changes when you re-run `ml/train.py`). With the
-feeder and monitor also running (steps above), you'll see flagged/blocked
-counts and the suspended-accounts list update on their own as new
-transactions get scored.
+Open **http://localhost:5173**. You'll land on a login screen first -
+every data endpoint requires a valid session (`/api/login`, checked
+server-side, not just hidden client-side), so this is a real gate, not
+decoration. Demo credentials:
+
+| Username | Password |
+|---|---|
+| `admin` | `group13` |
+| `analyst` | `shield2026` |
+
+Override either via `MOMO_FRAUD_ADMIN_PASSWORD` / `MOMO_FRAUD_ANALYST_PASSWORD`
+before starting the API. Sessions last 12 hours (`config.SESSION_TTL_HOURS`)
+and live in the API process's memory - restarting the API signs everyone out.
+
+Once in: the stat tiles, alert queue, and live scoring feed poll every 4
+seconds; the model comparison panel polls every 60 seconds (it only
+changes when you re-run `ml/train.py`). With the feeder and monitor also
+running (steps above), you'll see flagged/blocked counts and the
+suspended-accounts list update on their own as new transactions get
+scored. The topbar search box queries transactions and subscribers live
+(`/api/search`); the **Subscribers** page is a full directory search
+(`/api/subscribers`) with a click-through profile (`/api/subscribers/{id}`)
+showing identity, device, location, and the behavioral baseline the model
+scores new activity against. The gear/notification/help icons and the
+sidebar's Logs link are all backed by real data, not placeholders.
 
 If your API isn't on `localhost:8000` (e.g. deployed separately from the
 frontend), set `VITE_API_URL` - copy `frontend/.env.example` to

@@ -142,6 +142,27 @@ FEEDER_FRAUD_INJECTION_RATE = 0.05
 MONITOR_POLL_INTERVAL_SECONDS = 10.0
 
 # ---------------------------------------------------------------------------
+# Dashboard access (api/main.py) - a real, enforced login, not a UI-only
+# gate: every data endpoint requires a valid bearer token from /api/login.
+# Passwords are stored here as SHA-256 hashes (never plaintext), checked
+# with a constant-time compare - demo-grade (a fixed credential list, not
+# a real identity provider), but a genuine check, not a decoration.
+# Override via env vars so the checked-in defaults aren't the deployed ones.
+# ---------------------------------------------------------------------------
+import hashlib as _hashlib
+
+
+def _sha256(s: str) -> str:
+    return _hashlib.sha256(s.encode()).hexdigest()
+
+
+ANALYST_CREDENTIALS = {
+    "admin": _sha256(os.environ.get("MOMO_FRAUD_ADMIN_PASSWORD", "group13")),
+    "analyst": _sha256(os.environ.get("MOMO_FRAUD_ANALYST_PASSWORD", "shield2026")),
+}
+SESSION_TTL_HOURS = 12
+
+# ---------------------------------------------------------------------------
 # File paths
 # ---------------------------------------------------------------------------
 MODEL_PATH = os.path.join(BASE_DIR, "models", "xgboost_model.json")

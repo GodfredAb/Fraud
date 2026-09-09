@@ -1,6 +1,6 @@
 import { relativeTime } from "../format";
 
-export function SuspendedAccounts({ accounts }) {
+export function SuspendedAccounts({ accounts, onSelect }) {
   if (!accounts) {
     return <p className="muted">Loading…</p>;
   }
@@ -19,13 +19,13 @@ export function SuspendedAccounts({ accounts }) {
               {u.blocked_txn_count === 1 ? "" : "s"}
             </div>
           </div>
-          <span
-            className="icon-button icon-button-static"
-            title={`${u.full_name} (${u.user_id}) - user detail view not available in this demo`}
-            aria-hidden="true"
+          <button
+            className="icon-button"
+            title={`View ${u.full_name} (${u.user_id})`}
+            onClick={() => onSelect?.(u.user_id)}
           >
             👁
-          </span>
+          </button>
         </li>
       ))}
     </ul>
