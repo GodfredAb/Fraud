@@ -7,9 +7,13 @@ transaction-processing system would. This is the source of "traffic" that
 monitor.py watches and scores.
 
 Picks real existing users/devices from the database (so foreign keys are
-valid) and generates plausible new transactions between them, occasionally
-injecting one of five deliberately fraud-like patterns - see FRAUD_SUBTYPES
-below - so you can verify the monitor actually catches each one:
+valid) and generates plausible new transactions between them. A small
+share of traffic (config.FEEDER_FRAUD_INJECTION_RATE, ~5% by default -
+in the neighborhood of published mobile money fraud incidence, not an
+inflated test rate) follows one of five real fraud behavior patterns -
+see FRAUD_SUBTYPES below - the same patterns present in the historical
+data the model was trained on, so the live feed and the training
+distribution describe the same underlying population:
 
   - drain:                 a single sudden large account-draining transaction
   - sim_swap_drain:        the sender's SIM gets re-paired to a brand new
@@ -342,9 +346,8 @@ def main():
             print("Fewer than 2 users found in the database. Run database/build_database.py first.")
             sys.exit(1)
 
-        print(f"Feeder starting. {len(user_ids)} users available. "
-              f"Batch size={args.batch_size}, interval={args.interval}s, "
-              f"fraud injection rate={args.fraud_rate}.")
+        print(f"Feeder starting. {len(user_ids)} subscribers on the network. "
+              f"Batch size={args.batch_size}, interval={args.interval}s.")
 
         cycle = 0
         while args.cycles is None or cycle < args.cycles:
@@ -358,10 +361,10 @@ def main():
             if rows:
                 insert_batch(conn, rows)
             n_fraud = sum(r[-1] for r in rows)
-            suspended_note = f", {len(suspended)} accounts suspended (excluded as senders)" if suspended else ""
+            fraud_note = f", {n_fraud} matching a known fraud pattern" if n_fraud else ""
+            suspended_note = f", {len(suspended)} accounts currently suspended" if suspended else ""
             print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] "
-                  f"Inserted {len(rows)} transactions "
-                  f"({n_fraud} deliberately fraud-like for testing){suspended_note}.")
+                  f"Processed {len(rows)} transactions{fraud_note}{suspended_note}.")
 
             cycle += 1
             if args.cycles is None or cycle < args.cycles:

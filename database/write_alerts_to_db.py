@@ -6,7 +6,9 @@ flagged, blocked, block_reason - see ml/ensemble.py), writes the score
 back onto the transactions row (so it's marked as scored - scored_at IS
 NULL is what makes a transaction "pending" for monitor/monitor.py) and
 inserts a fraud_alerts row for anything flagged, so analysts can work the
-queue via v_alert_review_queue.
+queue via v_alert_review_queue. Anything that clears review on its own
+(not flagged, not blocked) is explicitly marked auto_approved=TRUE - a
+real decision recorded on the row, not just the absence of one.
 
 suspend_users is the other half of PREVENTION (not just detection): once
 the ensemble/rule engine hard-blocks a transaction, the sender's account
@@ -31,7 +33,7 @@ def write_alerts(conn, scored_df, model_version: str):
     update_rows = [
         (int(r.txn_id), float(r.fraud_probability), bool(r.flagged),
          bool(r.blocked), (r.block_reason or None), model_version, now,
-         float(r.scoring_duration_ms))
+         float(r.scoring_duration_ms), bool(not r.flagged and not r.blocked))
         for r in scored_df.itertuples()
     ]
 
@@ -44,11 +46,12 @@ def write_alerts(conn, scored_df, model_version: str):
                 block_reason         = v.block_reason,
                 model_version         = v.model_version,
                 scored_at              = v.scored_at,
-                scoring_duration_ms     = v.scoring_duration_ms
-            FROM (VALUES %s) AS v(txn_id, fraud_probability, flagged, blocked, block_reason, model_version, scored_at, scoring_duration_ms)
+                scoring_duration_ms     = v.scoring_duration_ms,
+                auto_approved            = v.auto_approved
+            FROM (VALUES %s) AS v(txn_id, fraud_probability, flagged, blocked, block_reason, model_version, scored_at, scoring_duration_ms, auto_approved)
             WHERE t.txn_id = v.txn_id
         """, update_rows,
-            template="(%s::bigint, %s::numeric, %s::boolean, %s::boolean, %s::varchar, %s::varchar, %s::timestamp, %s::double precision)")
+            template="(%s::bigint, %s::numeric, %s::boolean, %s::boolean, %s::varchar, %s::varchar, %s::timestamp, %s::double precision, %s::boolean)")
         # Note: NOT cur.rowcount here - execute_values pages large batches
         # into multiple UPDATE statements (default page_size=100), and
         # rowcount only reflects the last page executed, not the total.

@@ -148,6 +148,9 @@ def stats():
             (SELECT count(*) FROM transactions WHERE scored_at IS NULL)          AS pending_transactions,
             (SELECT count(*) FROM transactions WHERE flagged)                    AS flagged_transactions,
             (SELECT count(*) FROM transactions WHERE blocked)                    AS blocked_transactions,
+            (SELECT count(*) FROM transactions WHERE auto_approved)              AS approved_transactions,
+            (SELECT count(*) FROM transactions
+              WHERE auto_approved AND scored_at >= now() - interval '24 hours')  AS approved_24h,
             (SELECT count(*) FROM fraud_alerts WHERE alert_status = 'open')      AS open_alerts,
             (SELECT count(*) FROM users WHERE kyc_status = 'suspended')          AS suspended_accounts,
             (SELECT count(*) FROM users)                                        AS total_accounts,
@@ -192,7 +195,7 @@ def recent_transactions(limit: int = Query(25, ge=1, le=200)):
     return query("""
         SELECT txn_id, txn_timestamp, txn_type, amount,
                sender_user_id, receiver_user_id,
-               fraud_probability, flagged, blocked, block_reason, scored_at
+               fraud_probability, flagged, blocked, block_reason, auto_approved, scored_at
         FROM transactions
         WHERE scored_at IS NOT NULL
         ORDER BY scored_at DESC
@@ -214,7 +217,7 @@ def transaction_detail(txn_id: int):
             t.sender_imei, t.sender_balance_old, t.sender_balance_new,
             t.receiver_user_id, ru.full_name AS receiver_name, ru.msisdn AS receiver_msisdn,
             t.receiver_imei, t.receiver_balance_old, t.receiver_balance_new,
-            t.is_fraud, t.fraud_probability, t.flagged, t.blocked, t.block_reason,
+            t.is_fraud, t.fraud_probability, t.flagged, t.blocked, t.block_reason, t.auto_approved,
             t.model_version, t.scored_at, t.created_at
         FROM transactions t
         LEFT JOIN users su ON su.user_id = t.sender_user_id

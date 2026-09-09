@@ -201,6 +201,14 @@ CREATE TABLE transactions (
     -- which also freezes the sender's account when this is set.
     blocked                BOOLEAN       NOT NULL DEFAULT FALSE,
     block_reason           TEXT,
+    -- The other side of the decision, not just "not flagged": explicitly
+    -- set TRUE by whatever scored this row (monitor.py for live traffic,
+    -- the historical loader for already-resolved history) when it clears
+    -- review on its own - flagged=FALSE, blocked=FALSE, auto_approved=TRUE.
+    -- Gives the system a genuine three-way pathway (approve / flag /
+    -- block+suspend) with an audit trail, instead of "approved" being an
+    -- implicit default nobody actually decided.
+    auto_approved          BOOLEAN       NOT NULL DEFAULT FALSE,
     model_version         VARCHAR(50),
     scored_at             TIMESTAMP,
     -- Real engine processing time (ml/ensemble.py:score_ensemble), NOT

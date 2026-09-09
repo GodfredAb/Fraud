@@ -18,10 +18,16 @@ rescan transaction history. It:
      hard rule (or a high-confidence ensemble score) blocks: it's
      suspended (users.kyc_status -> 'suspended'), so feeder/feeder.py
      stops selecting it as a sender on subsequent batches.
+  5. Anything that clears review on its own (not flagged, not blocked) is
+     marked auto_approved=TRUE - an explicit third pathway alongside
+     flag-for-review and block+suspend, not just the absence of a flag.
 
-Prerequisite: run database/init_profiles.py once after loading historical
-data / training, so every user already has a baseline profile "learned"
-from history before the monitor starts watching live traffic.
+Prerequisite: run database/rebuild_historical.py once, which resets the
+database, loads a large historical transaction set, computes every user's
+baseline profile from it (what database/init_profiles.py does on its own,
+run automatically as the last step of that script), and retrains the
+ensemble - so this monitor starts against an already-trained pipeline
+with already-learned baselines, not learning anything itself at demo time.
 
 Run the feeder and the monitor at the same time (two terminals):
     Terminal 1: python feeder/feeder.py
@@ -148,8 +154,9 @@ def main():
     print(f"Monitor starting (incremental mode - no history rescans). "
           f"Polling every {args.interval}s, alert threshold={config.ALERT_THRESHOLD}, "
           f"block threshold={config.BLOCK_THRESHOLD}. Ctrl+C to stop.")
-    print("NOTE: run database/init_profiles.py once before starting this, "
-          "so users already have a learned baseline from history.")
+    print("Scoring against the pretrained ensemble and pre-computed user "
+          "baselines from database/rebuild_historical.py - no retraining "
+          "or profile learning happens here.")
     try:
         cycle = 0
         while args.cycles is None or cycle < args.cycles:

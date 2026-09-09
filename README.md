@@ -164,6 +164,23 @@ incremental version costs nothing in accuracy.
 original `synthetic.csv` or one exported from the database) for training
 and one-off batch evaluation. `monitor.py` is the live, incremental path.
 
+**Shortcut:** steps 1-4 below (schema, seed data, training, behavioral
+baselines) are also available as one command:
+
+```bash
+python database/rebuild_historical.py --dsn "$DSN"
+```
+
+It resets the database, seeds 500 subscribers across all 10 Ghana
+regions, generates a large historical transaction set (organic ~2% fraud
+rate, not an inflated test rate) spanning about two simulated years,
+loads it as already-resolved history (so `monitor.py`'s live queue starts
+empty), computes every user's behavioral baseline from it in the same
+pass `init_profiles.py` does on its own, and retrains the ensemble - so
+`feeder.py`/`monitor.py` start against an already-trained pipeline with
+nothing left to learn at demo time. The steps below are what it runs, for
+anyone who wants to do them individually or understand what each one does.
+
 ## 1. Stand up the database
 
 ```bash

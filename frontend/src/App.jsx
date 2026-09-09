@@ -79,6 +79,13 @@ function App() {
               sublabel={stats ? `P95: ${ms(stats.p95_scoring_latency_ms)}` : undefined}
               icon="◷"
             />
+            <StatTile
+              label="AUTO-APPROVED"
+              value={stats ? stats.approved_24h.toLocaleString() : "—"}
+              tone="good"
+              sublabel="Past 24h, no review needed"
+              icon="✓"
+            />
           </section>
 
           <div className="dash-grid">
