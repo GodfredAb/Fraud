@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: momo-fraud-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt -r api/requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: MOMO_FRAUD_DSN
+        sync: false
+
+# monitor.py and feeder.py are run locally (or from any machine), pointed
+# at the same Neon DSN as the API - Render's free tier has no background
+# worker option:
+#   python monitor/monitor.py --dsn "<neon-dsn>"
+#   python feeder/feeder.py --dsn "<neon-dsn>"
