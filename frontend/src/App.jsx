@@ -55,7 +55,7 @@ function App() {
   // polls before login, either.
   const { data: stats, error: statsError } = usePolling(api.stats, POLL_MS, [], authed && page === "dashboard");
   const { data: alerts } = usePolling(() => api.alerts(20), POLL_MS, [], authed && (page === "dashboard" || page === "alerts"));
-  const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS, [], authed && page === "alerts");
+  const { data: recent } = usePolling(() => api.recentTransactions(15), POLL_MS, [], authed && (page === "dashboard" || page === "alerts"));
   const { data: suspended } = usePolling(api.suspended, POLL_MS, [], authed && (page === "dashboard" || page === "accounts"));
   const { data: fraudLocations } = usePolling(() => api.fraudLocations(20), POLL_MS, [], authed && page === "dashboard");
   // Map view pulls a wider slice than the dashboard's top-20-worst-ever
@@ -167,6 +167,19 @@ function App() {
               </section>
             </div>
           </div>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Live Scoring Feed</h2>
+              <span className="muted">every transaction as it's scored · polls every {POLL_MS / 1000}s</span>
+            </div>
+            <RecentActivity
+              transactions={recent}
+              blockThreshold={blockThreshold}
+              alertThreshold={alertThreshold}
+              onSelect={setSelectedTxnId}
+            />
+          </section>
 
           <section className="panel">
             <div className="panel-header">
