@@ -10,6 +10,23 @@ services:
       - key: MOMO_FRAUD_DSN
         sync: false
 
+  # Static frontend, same account/dashboard as the API above - no second
+  # platform needed. Render's static-site hosting is free with no sleep
+  # behavior (unlike the API web service above, which does sleep on the
+  # free plan). VITE_API_URL must be set to the API service's URL AFTER
+  # it's deployed once (see README/chat instructions) - Vite bakes env
+  # vars in at BUILD time, so this has to be set before this service's
+  # first build, or you'll need to trigger a manual redeploy after setting it.
+  - type: web
+    name: momo-fraud-frontend
+    runtime: static
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
 # monitor.py and feeder.py are run locally (or from any machine), pointed
 # at the same Neon DSN as the API - Render's free tier has no background
 # worker option:
