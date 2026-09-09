@@ -1,8 +1,8 @@
 """
 build_results_report.py
 ------------------------
-Generates outputs/Fraud_Detection_Results_and_Comparison.pdf: this system's
-current performance (from the live model_comparison.csv, produced by
+Generates defense/Fraud_Detection_Results_and_Comparison.pdf: this system's
+current performance (from the live outputs/model_comparison.csv, produced by
 ml/train.py against the 500-subscriber, 10-region synthetic population) plus
 a comparison against results reported in published work that also evaluates
 fraud detection on synthetic transaction data (PaySim, IEEE-CIS, the NeurIPS
@@ -10,9 +10,14 @@ fraud detection on synthetic transaction data (PaySim, IEEE-CIS, the NeurIPS
 as reported in that literature, for context on where this system's
 numbers sit relative to the field - they are not re-run here.
 
+Lives in defense/, not outputs/ - it (and everything else in defense/) is
+presentation material, not something any other part of the pipeline reads;
+outputs/model_comparison.csv itself stays in outputs/, since ml/train.py
+writes there and the README points at it directly.
+
 Usage:
     pip install reportlab matplotlib pandas
-    python outputs/build_results_report.py
+    python defense/build_results_report.py
 """
 
 import os
@@ -30,13 +35,14 @@ from reportlab.platypus import (
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+OUTPUTS_DIR = os.path.join(os.path.dirname(HERE), "outputs")
 NAVY = colors.HexColor("#1B2A4A")
 ACCENT = colors.HexColor("#1F6FB2")
 SLATE = colors.HexColor("#3D3D3D")
 GOOD = colors.HexColor("#0CA30C")
 LIGHT_GREY = colors.HexColor("#F2F1ED")
 
-df = pd.read_csv(os.path.join(HERE, "model_comparison.csv"))
+df = pd.read_csv(os.path.join(OUTPUTS_DIR, "model_comparison.csv"))
 df = df.sort_values("pr_auc", ascending=False).reset_index(drop=True)
 xgb = df[df.model == "XGBoost"].iloc[0]
 holdout_n = int(xgb.true_positives + xgb.false_positives + xgb.false_negatives + xgb.true_negatives)
