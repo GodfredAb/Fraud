@@ -24,3 +24,9 @@ data/historical.csv
 # worth keeping in git history; defense/build_results_report.py expects
 # outputs/model_comparison.csv to exist locally (run ml/train.py first).
 outputs/
+
+# Presentation/defense material - stays on disk for the defense, not
+# tracked in git (this repo is what Render pulls from to deploy the live
+# app, and none of this is read by any running code). Untracking doesn't
+# purge it from earlier commits' history - only new commits are affected.
+defense/
