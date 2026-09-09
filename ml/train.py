@@ -17,6 +17,7 @@ future given the past).
 """
 
 import _pathfix  # noqa: F401
+import os
 import sys
 import json
 import joblib
@@ -180,6 +181,7 @@ def main(raw_path: str):
 
     # --- Comparison report ---------------------------------------------------
     report = pd.DataFrame(results).sort_values("pr_auc", ascending=False)
+    os.makedirs(os.path.dirname(config.COMPARISON_REPORT_PATH), exist_ok=True)
     report.to_csv(config.COMPARISON_REPORT_PATH, index=False)
 
     print("\n" + "=" * 78)
